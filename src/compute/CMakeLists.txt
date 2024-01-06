@@ -1,0 +1,80 @@
+cmake_minimum_required(VERSION 3.18...3.23)
+cmake_policy(VERSION 3.18)
+
+set(CMAKE_POLICY_DEFAULT_CMP0042 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0048 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0072 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0135 NEW)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+project(LuisaCompute LANGUAGES C CXX VERSION 0.3.1)
+
+if (NOT DEFINED LUISA_COMPUTE_MASTER_PROJECT)
+    if (CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+        set(LUISA_COMPUTE_MASTER_PROJECT ON)
+    else ()
+        set(LUISA_COMPUTE_MASTER_PROJECT OFF)
+    endif ()
+endif ()
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_OSX_DEPLOYMENT_TARGET 12)
+set(BUILD_SHARED_LIBS ON)
+
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64" OR
+        CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
+    # enable AVX2 for embree on x64
+    if (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /arch:AVX2")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:AVX2")
+    else ()
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=native -mf16c")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -mf16c")
+    endif ()
+endif ()
+
+if (NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "LuisaCompute only supports 64-bit platforms")
+endif ()
+
+if (NOT CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+    option(LUISA_COMPUTE_ENABLE_SCCACHE "Enable sccache to speed up compilation" ON)
+    if (LUISA_COMPUTE_ENABLE_SCCACHE)
+        find_program(SCCACHE_EXE sccache)
+        if (SCCACHE_EXE)
+            message(STATUS "Build with sccache: ${SCCACHE_EXE}")
+            set(CMAKE_C_COMPILER_LAUNCHER ${SCCACHE_EXE})
+            set(CMAKE_CXX_COMPILER_LAUNCHER ${SCCACHE_EXE})
+            set(CMAKE_OBJC_COMPILER_LAUNCHER ${SCCACHE_EXE})
+            set(CMAKE_OBJCXX_COMPILER_LAUNCHER ${SCCACHE_EXE})
+        else ()
+            message(STATUS "Could not find sccache")
+        endif ()
+    endif ()
+endif ()
+
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND
+        CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15.0)
+    add_compile_options(-Wno-deprecated-builtins)
+endif ()
+
+option(LUISA_COMPUTE_BUILD_TESTS "Build tests for LuisaCompute" ${LUISA_COMPUTE_MASTER_PROJECT})
+option(LUISA_COMPUTE_ENABLE_UNITY_BUILD "Enable unity build" OFF)
+
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+
+set(CMAKE_FIND_PACKAGE_SORT_ORDER NATURAL)
+set(CMAKE_FIND_PACKAGE_SORT_DIRECTION DEC)
+
+add_subdirectory(src)
