@@ -1,22 +1,24 @@
-//
-// Created by Mike on 8/1/2021.
-//
-
 #pragma once
 
 #include <mutex>
+#include <thread>
+#include <condition_variable>
 
 #include <cuda.h>
 
-#include <core/stl.h>
-#include <core/spin_mutex.h>
-#include <backends/cuda/cuda_callback_context.h>
-#include <backends/cuda/cuda_host_buffer_pool.h>
+#include <luisa/core/stl.h>
+#include <luisa/core/spin_mutex.h>
+#include <luisa/runtime/command_list.h>
+#include "cuda_callback_context.h"
+#include "cuda_host_buffer_pool.h"
 
 namespace luisa::compute::cuda {
 
 class CUDADevice;
-class CUDACallbackContext;
+struct CUDACallbackContext;
+
+class CUDAStream;
+class CUDAEvent;
 
 /**
  * @brief Stream on CUDA
@@ -25,58 +27,49 @@ class CUDACallbackContext;
 class CUDAStream {
 
 public:
-    static constexpr auto backed_cuda_stream_count = 3u;
-    static_assert(backed_cuda_stream_count <= 32u);// limit of uint bits
+    using CallbackContainer = luisa::vector<CUDACallbackContext *>;
+
+    static constexpr auto stop_ticket = std::numeric_limits<uint64_t>::max();
+
+    struct CallbackPackage {
+        uint64_t ticket;
+        CallbackContainer callbacks;
+    };
 
 private:
     CUDADevice *_device;
     CUDAHostBufferPool _upload_pool;
-    std::mutex _mutex;
-    luisa::queue<luisa::vector<CUDACallbackContext *>> _callback_lists;
-    luisa::vector<CUDACallbackContext *> _current_callbacks;
-    std::array<CUstream, backed_cuda_stream_count> _worker_streams{};
-    std::array<CUevent, backed_cuda_stream_count> _worker_events{};
-    mutable uint _used_streams{0u};
-    mutable uint _round{0u};
+    CUDAHostBufferPool _download_pool;
+    std::thread _callback_thread;
+    std::mutex _callback_mutex;
+    std::condition_variable _callback_cv;
+    volatile uint64_t *_callback_semaphore{nullptr};
+    CUdeviceptr _callback_semaphore_device{0u};
+    std::atomic_uint64_t _current_ticket{0u};
+    std::atomic_uint64_t _finished_ticket{0u};
+    luisa::queue<CallbackPackage> _callback_lists;
+    CUstream _stream{};
+    spin_mutex _dispatch_mutex;
+
+private:
+    using LogCallback = DeviceInterface::StreamLogCallback;
+    LogCallback _log_callback;
 
 public:
     explicit CUDAStream(CUDADevice *device) noexcept;
-    ~CUDAStream() noexcept;
-    /**
-     * @brief Return handle of a CUDA worker stream
-     *
-     * @param force_first_stream enforce to get the first (main) worker stream or not
-     * @return CUstream
-     */
-    [[nodiscard]] CUstream handle(bool force_first_stream = false) const noexcept;
-    /**
-     * @brief Return CUDAHostBufferPool
-     * 
-     * @return address of CUDAHostBufferPool
-     */
+    virtual ~CUDAStream() noexcept;
+    [[nodiscard]] auto device() const noexcept { return _device; }
+    [[nodiscard]] auto handle() const noexcept { return _stream; }
     [[nodiscard]] auto upload_pool() noexcept { return &_upload_pool; }
-    /**
-     * @brief Emplace callback context
-     * 
-     * @param cb callback context
-     */
-    void emplace_callback(CUDACallbackContext *cb) noexcept;
-    /**
-     * @brief Insert barrier into the main worker stream
-     */
-    void barrier() noexcept;
-    /**
-     * @brief Dispatch callbacks
-     */
-    void dispatch_callbacks() noexcept;
-    /**
-     * @brief Synchronize
-     */
+    [[nodiscard]] auto download_pool() noexcept { return &_download_pool; }
+    [[nodiscard]] auto &log_callback() const noexcept { return _log_callback; }
+    void dispatch(CommandList &&command_list) noexcept;
     void synchronize() noexcept;
-    /**
-     * @brief Dispatch a host function in the stream
-     */
-    void dispatch(luisa::move_only_function<void()> &&f) noexcept;
+    void signal(CUDAEvent *event, uint64_t value) noexcept;
+    void wait(CUDAEvent *event, uint64_t value) noexcept;
+    void callback(CallbackContainer &&callbacks) noexcept;
+    void set_name(luisa::string &&name) noexcept;
+    void set_log_callback(LogCallback callback) noexcept;
 };
 
 }// namespace luisa::compute::cuda

@@ -1,8 +1,10 @@
-//
-// Created by Mike Smith on 2021/12/23.
-//
+#include <version>
+#include <sstream>
+#include <thread>
+#include <memory>
+#include <condition_variable>
 
-#if __clang_major__ >= 14
+#if (!defined(__clang_major__) || __clang_major__ >= 14) && defined(__cpp_lib_barrier)
 #define LUISA_COMPUTE_USE_STD_BARRIER
 #endif
 
@@ -10,21 +12,26 @@
 #include <barrier>
 #endif
 
-#include <sstream>
-#include <core/logging.h>
-#include <core/thread_pool.h>
+#include <luisa/core/stl/vector.h>
+#include <luisa/core/stl/queue.h>
+#include <luisa/core/logging.h>
+#include <luisa/core/thread_pool.h>
 
 namespace luisa {
 
 namespace detail {
 
-[[nodiscard]] static inline auto &is_worker_thread() noexcept {
+[[nodiscard]] static auto &is_worker_thread() noexcept {
     static thread_local auto is_worker = false;
     return is_worker;
 }
 
+[[nodiscard]] static auto &worker_thread_index() noexcept {
+    static thread_local auto id = 0u;
+    return id;
+}
+
 static inline void check_not_in_worker_thread(std::string_view f) noexcept {
-#ifndef NDEBUG
     if (is_worker_thread()) [[unlikely]] {
         std::ostringstream oss;
         oss << std::this_thread::get_id();
@@ -33,7 +40,6 @@ static inline void check_not_in_worker_thread(std::string_view f) noexcept {
             "from worker thread {}.",
             f, oss.str());
     }
-#endif
 }
 
 }// namespace detail
@@ -50,13 +56,13 @@ private:
     uint _counter;
     uint _phase;
     std::condition_variable _cv;
-    std::mutex _mutex;
+    std::mutex _callback_mutex;
 
 public:
     explicit Barrier(uint n) noexcept
         : _n{n}, _counter{n}, _phase{0u} {}
     void arrive_and_wait() noexcept {
-        std::unique_lock lock{_mutex};
+        std::unique_lock lock{_callback_mutex};
         auto arrive_phase = _phase;
         if (--_counter == 0u) {
             _counter = _n;
@@ -70,79 +76,100 @@ public:
 };
 #endif
 
-ThreadPool::ThreadPool(size_t num_threads) noexcept : _should_stop{false} {
-    if (num_threads == 0u) {
-        num_threads = std::max(
-            std::thread::hardware_concurrency(), 1u);
+struct ThreadPool::Impl {
+    luisa::vector<std::thread> threads;
+    luisa::queue<luisa::SharedFunction<void()>> tasks;
+    std::mutex mutex;
+    Barrier synchronize_barrier;
+    Barrier dispatch_barrier;
+    std::condition_variable cv;
+    bool should_stop{false};
+    explicit Impl(size_t num_threads) noexcept
+        : synchronize_barrier(num_threads + 1u),
+          dispatch_barrier(num_threads) {
+        threads.reserve(num_threads);
+        for (auto i = 0u; i < num_threads; i++) {
+            threads.emplace_back([this, i] {
+                detail::is_worker_thread() = true;
+                detail::worker_thread_index() = i;
+                for (;;) {
+                    std::unique_lock lock{mutex};
+                    cv.wait(lock, [this] { return !tasks.empty() || should_stop; });
+                    if (should_stop && tasks.empty()) [[unlikely]] { break; }
+                    auto task = std::move(tasks.front());
+                    tasks.pop();
+                    lock.unlock();
+                    task();
+                }
+            });
+        }
+        LUISA_INFO("Created thread pool with {} thread{}.",
+                   num_threads, num_threads == 1u ? "" : "s");
     }
-    _dispatch_barrier = luisa::make_unique<Barrier>(num_threads);
-    _synchronize_barrier = luisa::make_unique<Barrier>(num_threads + 1u /* main thread */);
-    _threads.reserve(num_threads);
-    for (auto i = 0u; i < num_threads; i++) {
-        _threads.emplace_back(std::thread{[this] {
-            detail::is_worker_thread() = true;
-            for (;;) {
-                std::unique_lock lock{_mutex};
-                _cv.wait(lock, [this] { return !_tasks.empty() || _should_stop; });
-                if (_should_stop && _tasks.empty()) [[unlikely]] { break; }
-                auto task = std::move(_tasks.front());
-                _tasks.pop();
-                lock.unlock();
-                task();
-            }
-        }});
-    }
-    LUISA_INFO(
-        "Created thread pool with {} thread{}.",
-        num_threads, num_threads == 1u ? "" : "s");
+};
+
+ThreadPool::ThreadPool(size_t num_threads) noexcept
+    : _impl{luisa::make_unique<Impl>([&]() {
+          if (num_threads == 0u) {
+              num_threads = std::max(
+                  std::thread::hardware_concurrency(), 1u);
+          }
+          return num_threads;
+      }())} {
 }
 
 void ThreadPool::barrier() noexcept {
     detail::check_not_in_worker_thread("barrier");
-    _dispatch_all([this] { _dispatch_barrier->arrive_and_wait(); });
+    _dispatch_all([this] { _impl->dispatch_barrier.arrive_and_wait(); });
 }
 
 void ThreadPool::synchronize() noexcept {
     detail::check_not_in_worker_thread("synchronize");
-    _dispatch_all([this] { _synchronize_barrier->arrive_and_wait(); });
-    _synchronize_barrier->arrive_and_wait();
-}
-
-void ThreadPool::_dispatch(luisa::function<void()> task) noexcept {
-    {
-        std::scoped_lock lock{_mutex};
-        _tasks.emplace(std::move(task));
+    while (task_count() != 0u) {
+        _dispatch_all([this] { _impl->synchronize_barrier.arrive_and_wait(); });
+        _impl->synchronize_barrier.arrive_and_wait();
     }
-    _cv.notify_one();
 }
 
-void ThreadPool::_dispatch_all(luisa::function<void()> task, size_t max_threads) noexcept {
+void ThreadPool::_dispatch(luisa::SharedFunction<void()> &&task) noexcept {
     {
-        std::scoped_lock lock{_mutex};
-        for (auto i = 0u; i < std::min(_threads.size(), max_threads) - 1u; i++) {
-            _tasks.emplace(task);
+        std::lock_guard lock{_impl->mutex};
+        _impl->tasks.emplace(std::move(task));
+    }
+    _impl->cv.notify_one();
+}
+
+void ThreadPool::_dispatch_all(luisa::SharedFunction<void()> &&task, size_t max_threads) noexcept {
+    {
+        std::lock_guard lock{_impl->mutex};
+        for (auto i = 0u; i < std::min(_impl->threads.size(), max_threads) - 1u; i++) {
+            _impl->tasks.emplace(task);
         }
-        _tasks.emplace(std::move(task));
+        _impl->tasks.emplace(std::move(task));
     }
-    _cv.notify_all();
+    _impl->cv.notify_all();
 }
 
 ThreadPool::~ThreadPool() noexcept {
     {
-        std::scoped_lock lock{_mutex};
-        _should_stop = true;
+        std::lock_guard lock{_impl->mutex};
+        _impl->should_stop = true;
     }
-    _cv.notify_all();
-    for (auto &&t : _threads) { t.join(); }
+    _impl->cv.notify_all();
+    for (auto &&t : _impl->threads) { t.join(); }
 }
 
-ThreadPool &ThreadPool::global() noexcept {
-    static ThreadPool pool;
-    return pool;
+uint ThreadPool::size() const noexcept {
+    return static_cast<uint>(_impl->threads.size());
 }
-
-uint ThreadPool::task_count() const noexcept {
-    return _task_count.load();
+bool ThreadPool::is_worker_thread() noexcept {
+    return detail::is_worker_thread();
+}
+uint ThreadPool::worker_thread_index() noexcept {
+    LUISA_ASSERT(detail::is_worker_thread(),
+                 "ThreadPool::worker_thread_index() "
+                 "called in non-worker thread.");
+    return detail::worker_thread_index();
 }
 
 }// namespace luisa

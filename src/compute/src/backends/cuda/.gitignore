@@ -1,4 +1,1 @@
-!cuda_accel_update.ptx
-optix/
-!optix/README.md
-
+!cuda_builtin/cuda_builtin_kernels.ptx

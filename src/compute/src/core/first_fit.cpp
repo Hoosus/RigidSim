@@ -1,10 +1,7 @@
-//
-// Created by Mike on 2021/12/10.
-//
-
-#include <core/pool.h>
-#include <core/mathematics.h>
-#include <core/first_fit.h>
+#include <luisa/core/mathematics.h>
+#include <luisa/core/pool.h>
+#include <luisa/core/logging.h>
+#include <luisa/core/first_fit.h>
 
 namespace luisa {
 
@@ -19,6 +16,9 @@ inline FirstFit::Node::Node() noexcept = default;
 
 FirstFit::FirstFit(size_t size, size_t alignment) noexcept
     : _alignment{next_pow2(alignment)} {
+    LUISA_ASSERT(size % _alignment == 0u,
+                 "Size (got {}) must be aligned to the given alignment ({}).",
+                 size, _alignment);
     _free_list._next = detail::first_fit_node_pool().create();
     _free_list._size = size;
     _free_list._next->_next = nullptr;
@@ -44,13 +44,13 @@ FirstFit &FirstFit::operator=(FirstFit &&rhs) noexcept {
 }
 
 FirstFit::Node *FirstFit::allocate(size_t size) noexcept {
+    auto mask = _alignment - 1u;
+    auto aligned_size = (size + mask) & ~mask;
     // walk the free list
     for (auto p = &_free_list; p->_next != nullptr; p = p->_next) {
         // found available node
-        if (auto node = p->_next; node->_size > size) {
+        if (auto node = p->_next; node->_size >= aligned_size) {
             // compute aligned size
-            auto mask = _alignment - 1u;
-            auto aligned_size = (size & mask) == 0u ? size : (size & ~mask) + _alignment;
             // has remaining size, split the node
             if (node->_size > aligned_size) {
                 auto alloc_node = detail::first_fit_node_pool().create();
@@ -69,6 +69,52 @@ FirstFit::Node *FirstFit::allocate(size_t size) noexcept {
     return nullptr;
 }
 
+FirstFit::Node *FirstFit::allocate_best_fit(size_t size) noexcept {
+    auto mask = _alignment - 1u;
+    auto aligned_size = (size + mask) & ~mask;
+    struct FitResult {
+        Node *p;
+        Node *node;
+        size_t remained;
+    };
+    FitResult result{
+        nullptr, nullptr, std::numeric_limits<size_t>::max()};
+    // walk the free list
+    for (auto p = &_free_list; p->_next != nullptr; p = p->_next) {
+        // found available node
+        if (auto node = p->_next; node->_size >= aligned_size) {
+            auto remained = node->_size - aligned_size;
+            if (remained > 0) {
+                // This one is better
+                if (remained < result.remained) {
+                    result.remained = remained;
+                    result.p = p;
+                    result.node = node;
+                }
+            } else {
+                result.remained = 0;
+                result.p = p;
+                result.node = node;
+                break;
+            }
+            // no more remaining size, use the whole node
+            // p->_next = node->_next;
+        }
+    }
+    if (result.node == nullptr)
+        return nullptr;
+    if (result.remained == 0) {
+        result.p->_next = result.node->_next;
+        return result.node;
+    }
+    auto alloc_node = detail::first_fit_node_pool().create();
+    alloc_node->_offset = result.node->_offset;
+    alloc_node->_size = aligned_size;
+    result.node->_offset += aligned_size;
+    result.node->_size -= aligned_size;
+    return alloc_node;
+}
+
 void FirstFit::free(FirstFit::Node *node) noexcept {
     if (node != nullptr) [[likely]] {
         auto first = _free_list._next;
@@ -81,7 +127,7 @@ void FirstFit::free(FirstFit::Node *node) noexcept {
         if (node_end == first->_offset) {// insert as first, merge
             first->_offset = node->_offset;
             first->_size += node->_size;
-            detail::first_fit_node_pool().recycle(node);
+            detail::first_fit_node_pool().destroy(node);
             return;
         }
         // should not be the first node
@@ -100,22 +146,22 @@ void FirstFit::free(FirstFit::Node *node) noexcept {
                 if (node_end == next->_offset) {
                     next->_offset = node->_offset;
                     next->_size += node->_size;
-                    detail::first_fit_node_pool().recycle(node);
+                    detail::first_fit_node_pool().destroy(node);
                     return;
                 }
             } else if (prev_end == node->_offset) {// merge with prev
                 // no merge with next
                 if (next == nullptr || node_end < next->_offset) {
                     p->_size += node->_size;
-                    detail::first_fit_node_pool().recycle(node);
+                    detail::first_fit_node_pool().destroy(node);
                     return;
                 }
                 // merge with prev & next
                 if (node_end == next->_offset) {
                     p->_size += node->_size + next->_size;
                     p->_next = next->_next;
-                    detail::first_fit_node_pool().recycle(node);
-                    detail::first_fit_node_pool().recycle(next);
+                    detail::first_fit_node_pool().destroy(node);
+                    detail::first_fit_node_pool().destroy(next);
                     return;
                 }
             }
@@ -139,15 +185,15 @@ inline void FirstFit::_destroy() noexcept {
         while (p != nullptr) {
             auto node = p;
             p = p->_next;
-            detail::first_fit_node_pool().recycle(node);
+            detail::first_fit_node_pool().destroy(node);
         }
     }
 }
 
 luisa::string FirstFit::dump_free_list() const noexcept {
-    luisa::string message{fmt::format("[head (size = {})]", size())};
+    luisa::string message{luisa::format("[head (size = {})]", size())};
     for (auto p = _free_list._next; p != nullptr; p = p->_next) {
-        message.append(fmt::format(" -> [{}, {})", p->_offset, p->_offset + p->_size));
+        message.append(luisa::format(" -> [{}, {})", p->_offset, p->_offset + p->_size));
     }
     return message;
 }

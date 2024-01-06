@@ -1,58 +1,50 @@
-//
-// Created by Mike on 2021/12/4.
-//
-
 #pragma once
 
 #include <span>
 #include <memory>
 
-#include <core/basic_types.h>
+#include <luisa/core/basic_types.h>
+#include <luisa/core/spin_mutex.h>
+#include <luisa/ast/usage.h>
 
 namespace luisa::compute {
 class ShaderDispatchCommand;
-}
+}// namespace luisa::compute
 
 namespace luisa::compute::cuda {
 
-class CUDADevice;
-class CUDAStream;
+class CUDACommandEncoder;
+class CUDAShaderPrinter;
 
-/**
- * @brief Shader on CUDA
- * 
- */
-struct CUDAShader {
-    CUDAShader() noexcept = default;
+class CUDAShader {
+
+private:
+    luisa::unique_ptr<CUDAShaderPrinter> _printer;
+    luisa::vector<Usage> _argument_usages;
+    luisa::string _name;
+    mutable spin_mutex _name_mutex;
+
+private:
+    virtual void _launch(CUDACommandEncoder &encoder,
+                         ShaderDispatchCommand *command) const noexcept = 0;
+
+public:
+    static void _patch_ptx_version(luisa::string &ptx) noexcept;
+
+public:
+    CUDAShader(luisa::unique_ptr<CUDAShaderPrinter> printer,
+               luisa::vector<Usage> arg_usages) noexcept;
+    virtual ~CUDAShader() noexcept;
     CUDAShader(CUDAShader &&) noexcept = delete;
     CUDAShader(const CUDAShader &) noexcept = delete;
     CUDAShader &operator=(CUDAShader &&) noexcept = delete;
     CUDAShader &operator=(const CUDAShader &) noexcept = delete;
-    virtual ~CUDAShader() noexcept = default;
-    /**
-     * @brief Create a shader object from code
-     * 
-     * @param device CUDADevice
-     * @param ptx kernel code
-     * @param ptx_size code size
-     * @param entry name of function
-     * @param is_raytracing is raytracing
-     * @return CUDAShader* 
-     */
-    [[nodiscard]] static CUDAShader *create(CUDADevice *device, const char *ptx, size_t ptx_size, const char *entry, bool is_raytracing) noexcept;
-    /**
-     * @brief Destroy a CUDAShader
-     * 
-     * @param shader 
-     */
-    static void destroy(CUDAShader *shader) noexcept;
-    /**
-     * @brief Launch command to stream
-     * 
-     * @param stream 
-     * @param command 
-     */
-    virtual void launch(CUDAStream *stream, const ShaderDispatchCommand *command) const noexcept = 0;
+    [[nodiscard]] Usage argument_usage(size_t i) const noexcept;
+    [[nodiscard]] auto printer() const noexcept { return _printer.get(); }
+    [[nodiscard]] virtual void *handle() const noexcept = 0;
+    void launch(CUDACommandEncoder &encoder,
+                ShaderDispatchCommand *command) const noexcept;
+    void set_name(luisa::string &&name) noexcept;
 };
 
-}
+}// namespace luisa::compute::cuda

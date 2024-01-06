@@ -1,15 +1,12 @@
-//
-// Created by Mike Smith on 2021/6/25.
-//
-
-#include <iostream>
-#include <runtime/context.h>
-#include <runtime/device.h>
-#include <runtime/stream.h>
-#include <runtime/event.h>
-#include <dsl/syntax.h>
-#include <gui/window.h>
-#include <gui/framerate.h>
+#include <luisa/core/clock.h>
+#include <luisa/core/logging.h>
+#include <luisa/runtime/context.h>
+#include <luisa/runtime/device.h>
+#include <luisa/runtime/stream.h>
+#include <luisa/runtime/event.h>
+#include <luisa/runtime/swapchain.h>
+#include <luisa/dsl/syntax.h>
+#include <luisa/gui/window.h>
 
 using namespace luisa;
 using namespace luisa::compute;
@@ -18,11 +15,11 @@ int main(int argc, char *argv[]) {
 
     Context context{argv[0]};
 
-    if(argc <= 1){
-        LUISA_INFO("Usage: {} <backend>. <backend>: cuda, dx, ispc, metal", argv[0]);
+    if (argc <= 1) {
+        LUISA_INFO("Usage: {} <backend>. <backend>: cuda, dx, cpu, metal", argv[0]);
         exit(1);
     }
-    auto device = context.create_device(argv[1]);
+    Device device = context.create_device(argv[1]);
 
     Callable palette = [](Float d) noexcept {
         return lerp(make_float3(0.2f, 0.7f, 0.9f), make_float3(1.0f, 0.0f, 1.0f), d);
@@ -35,7 +32,7 @@ int main(int argc, char *argv[]) {
     };
 
     Callable map = [&rotate](Float3 p, Float time) noexcept {
-        for (auto i = 0u; i < 8u; i++) {
+        for (uint i = 0u; i < 8u; i++) {
             Var t = time * 0.2f;
             p = make_float3(rotate(p.xz(), t), p.y).xzy();
             p = make_float3(rotate(p.xy(), t * 1.89f), p.z);
@@ -48,10 +45,10 @@ int main(int argc, char *argv[]) {
         Var t = 0.0f;
         Var col = make_float3(0.0f);
         Var d = 0.0f;
-        for (auto i : range(64)) {
+        for (UInt i : dynamic_range(64)) {
             Var p = ro + rd * t;
             d = map(p, time) * 0.5f;
-            if_(d<0.02f | d> 100.0f, [] { break_(); });
+            if_(d < 0.02f | d > 100.0f, [] { break_(); });
             col += palette(length(p) * 0.1f) / (400.0f * d);
             t += d;
         }
@@ -89,33 +86,25 @@ int main(int argc, char *argv[]) {
     auto clear = device.compile(clear_kernel);
     auto shader = device.compile(k);
 
-    static constexpr auto width = 1024u;
-    static constexpr auto height = 1024u;
-    auto device_image = device.create_image<float>(PixelStorage::BYTE4, width, height);
-    std::vector<std::array<uint8_t, 4u>> host_image(width * height);
+    static constexpr uint width = 1024u;
+    static constexpr uint height = 1024u;
+    Stream stream = device.create_stream(StreamTag::GRAPHICS);
+    Window window{"Display", make_uint2(width, height)};
+    Swapchain swap_chain{device.create_swapchain(
+        window.native_handle(),
+        stream,
+        window.size(),
+        false, true, 2)};
+    Image<float> device_image = device.create_image<float>(swap_chain.backend_storage(), width, height);
 
-    auto stream = device.create_stream();
     stream << clear(device_image).dispatch(width, height);
 
-    Window window{"Display", make_uint2(width, height)};
-    window.set_key_callback([&](int key, int action) noexcept {
-        if (action == GLFW_PRESS && key == GLFW_KEY_ESCAPE) {
-            window.set_should_close();
-        }
-    });
-
     Clock clock;
-    Framerate framerate{32};
-    window.run([&] {
-        framerate.record();
-        auto time = static_cast<float>(clock.toc() * 1e-3);
+    while (!window.should_close()) {
+        window.poll_events();
+        float time = static_cast<float>(clock.toc() * 1e-3);
         stream << shader(device_image, time).dispatch(width, height)
-               << device_image.copy_to(host_image.data())
-               << synchronize();
-        window.set_background(host_image.data(), make_uint2(width, height));
-
-        ImGui::Begin("Console", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-        ImGui::Text("FPS: %.1f", framerate.report());
-        ImGui::End();
-    });
+               << swap_chain.present(device_image);
+    }
+    stream << synchronize();
 }

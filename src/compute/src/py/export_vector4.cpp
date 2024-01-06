@@ -1,7 +1,18 @@
 #include <pybind11/pybind11.h>
-#include <luisa-compute.h>
+#include <luisa/ast/function.h>
+#include <luisa/core/logging.h>
+#include <luisa/runtime/device.h>
+#include <luisa/runtime/context.h>
+#include <luisa/runtime/stream.h>
+#include <luisa/runtime/rhi/command.h>
+#include <luisa/runtime/image.h>
+#include <luisa/runtime/rtx/accel.h>
+#include <luisa/runtime/rtx/mesh.h>
+#include <luisa/runtime/rtx/hit.h>
+#include <luisa/runtime/rtx/ray.h>
 
 namespace py = pybind11;
+using namespace luisa;
 using namespace luisa::compute;
 
 #define LUISA_EXPORT_ARITHMETIC_OP(T) \
@@ -459,3 +470,4 @@ void export_vector4(py::module &m) {
     LUISA_EXPORT_FLOAT_OP(float)
     LUISA_EXPORT_BOOL_OP(bool)
 }
+

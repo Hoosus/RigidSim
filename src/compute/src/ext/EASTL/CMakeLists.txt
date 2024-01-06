@@ -23,6 +23,7 @@ file(GLOB EASTL_SOURCES "source/*.cpp")
 add_library(EASTL SHARED ${EASTL_SOURCES})
 
 target_compile_definitions(EASTL PUBLIC
+        EA_PRAGMA_ONCE_SUPPORTED=1
         EA_HAVE_CPP11_CONTAINERS=1
         EA_HAVE_CPP11_ATOMIC=1
         EA_HAVE_CPP11_CONDITION_VARIABLE=1
@@ -62,7 +63,6 @@ if (WIN32 OR EASTL_ENABLE_MIMALLOC)
     set(MI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     add_subdirectory(packages/mimalloc)
     if (MSVC)
-        target_compile_options(mimalloc-static PRIVATE /W0)
         target_compile_definitions(mimalloc-static PUBLIC _CRT_SECURE_NO_WARNINGS=1)
     endif ()
     set_target_properties(mimalloc-static PROPERTIES UNITY_BUILD ON)
@@ -70,9 +70,7 @@ if (WIN32 OR EASTL_ENABLE_MIMALLOC)
     target_link_libraries(EASTL PRIVATE mimalloc-static)
 endif ()
 
-set_target_properties(EASTL PROPERTIES
-        UNITY_BUILD ON
-        WINDOWS_EXPORT_ALL_SYMBOLS ON)
+set_target_properties(EASTL PROPERTIES UNITY_BUILD ON)
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND
         CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15.0)
@@ -90,7 +88,7 @@ add_definitions(-DEASTL_OPENSOURCE=1)
 #-------------------------------------------------------------------------------------------
 # Include dirs
 #-------------------------------------------------------------------------------------------
-target_include_directories(EASTL PUBLIC include)
+target_include_directories(EASTL PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 
 #-------------------------------------------------------------------------------------------
 # Dependencies

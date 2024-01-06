@@ -8,7 +8,7 @@
 #include <GLFW/glfw3.h>
 #include <imgui/backends/imgui_impl_opengl3.h>
 
-#include <core/logging.h>
+#include <luisa/core/logging.h>
 #include <gui/imgui_impl_glfw.h>
 #include <gui/window.h>
 

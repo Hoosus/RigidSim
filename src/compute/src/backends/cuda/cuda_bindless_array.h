@@ -1,23 +1,20 @@
-//
-// Created by Mike on 7/30/2021.
-//
-
 #pragma once
 
 #include <cuda.h>
 
-#include <core/spin_mutex.h>
-#include <core/stl.h>
-#include <core/dirty_range.h>
-#include <runtime/sampler.h>
-#include <runtime/resource_tracker.h>
-#include <backends/cuda/cuda_error.h>
-#include <backends/cuda/cuda_mipmap_array.h>
+#include <luisa/core/spin_mutex.h>
+#include <luisa/core/stl.h>
+#include <luisa/runtime/rhi/sampler.h>
+#include <luisa/runtime/rhi/command.h>
+#include "../common/resource_tracker.h"
+#include "cuda_error.h"
+#include "cuda_texture.h"
 
 namespace luisa::compute::cuda {
 
 class CUDADevice;
 class CUDAStream;
+class CUDACommandEncoder;
 
 /**
  * @brief Bindless array of CUDA
@@ -26,102 +23,31 @@ class CUDAStream;
 class CUDABindlessArray {
 
 public:
-    /**
-     * @brief Slot struct on device
-     * 
-     */
-    struct SlotSOA {
-        CUdeviceptr _buffer_slots;
-        CUdeviceptr _tex2d_slots;
-        CUdeviceptr _tex3d_slots;
-        CUdeviceptr _tex2d_sizes;
-        CUdeviceptr _tex3d_sizes;
+    struct Slot {
+        uint64_t buffer;
+        size_t size;
+        uint64_t tex2d;
+        uint64_t tex3d;
     };
 
+    using Binding = CUdeviceptr;
+
 private:
-    SlotSOA _handle{};
-    DirtyRange _buffer_dirty_range;
-    DirtyRange _tex2d_dirty_range;
-    DirtyRange _tex3d_dirty_range;
-    luisa::vector<CUdeviceptr> _buffer_slots;
+    CUdeviceptr _handle{};
     luisa::vector<CUtexObject> _tex2d_slots;
     luisa::vector<CUtexObject> _tex3d_slots;
-    luisa::vector<std::array<uint16_t, 2u>> _tex2d_sizes;
-    luisa::vector<std::array<uint16_t, 4u>> _tex3d_sizes;
-    ResourceTracker _resource_tracker;
-    luisa::vector<uint64_t> _buffer_resources;
-    luisa::unordered_map<CUtexObject, uint64_t> _texture_resources;
+    ResourceTracker _texture_tracker;
+    luisa::string _name;
+    spin_mutex _mutex;
 
 public:
-    /**
-     * @brief Construct a new CUDABindlessArray object
-     * 
-     * @param capacity capacity of bindless array
-     */
     explicit CUDABindlessArray(size_t capacity) noexcept;
     ~CUDABindlessArray() noexcept;
-    /**
-     * @brief Return SlotSOA handle
-     * 
-     * @return SlotSOA
-     */
     [[nodiscard]] auto handle() const noexcept { return _handle; }
-    /**
-     * @brief Emplace a buffer
-     * 
-     * @param index place to emplace
-     * @param buffer handle of buffer
-     * @param offset offset of buffer
-     */
-    void emplace_buffer(size_t index, uint64_t buffer, size_t offset) noexcept;
-    /**
-     * @brief Emplace a 2D texture
-     * 
-     * @param index place to emplace
-     * @param array address of 2D texture
-     * @param sampler sampler of texture
-     */
-    void emplace_tex2d(size_t index, CUDAMipmapArray *array, Sampler sampler) noexcept;
-    /**
-     * @brief Emplace a 3D texture
-     * 
-     * @param index index to emplace
-     * @param array address of 3D texture
-     * @param sampler sampler of texture
-     */
-    void emplace_tex3d(size_t index, CUDAMipmapArray *array, Sampler sampler) noexcept;
-    /**
-     * @brief Remove buffer
-     * 
-     * @param index place to remove
-     */
-    void remove_buffer(size_t index) noexcept;
-    /**
-     * @brief Remove 2D texture
-     * 
-     * @param index place to remove
-     */
-    void remove_tex2d(size_t index) noexcept;
-    /**
-     * @brief Remove 3D texture
-     * 
-     * @param index place to remove
-     */
-    void remove_tex3d(size_t index) noexcept;
-    /**
-     * @brief If resource is used
-     * 
-     * @param handle handle of resource
-     * @return true 
-     * @return false 
-     */
-    [[nodiscard]] bool uses_resource(uint64_t handle) const noexcept;
-    /**
-     * @brief Upload bindless array to CUDA device
-     * 
-     * @param stream CUDAStream
-     */
-    void upload(CUDAStream *stream) noexcept;
+    void update(CUDACommandEncoder &encoder, BindlessArrayUpdateCommand *cmd) noexcept;
+    [[nodiscard]] auto binding() const noexcept { return _handle; }
+    void set_name(luisa::string &&name) noexcept;
 };
 
 }// namespace luisa::compute::cuda
+

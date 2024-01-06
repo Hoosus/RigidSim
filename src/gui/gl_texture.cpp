@@ -55,7 +55,7 @@ void GLTexture::resize(uint2 size) noexcept {
 GLTexture::GLTexture(PixelFormat format, uint2 size) noexcept
     : _format{_gl_format(format)},
       _type{_gl_type(format)},
-      _pixel_size{static_cast<uint>(compute::pixel_format_size(format))} {
+      _pixel_size{static_cast<uint>(compute::pixel_format_size(format, uint3(1)))} {
     glGenTextures(1, &_handle);
     glBindTexture(GL_TEXTURE_2D, _handle);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);

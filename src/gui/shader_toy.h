@@ -4,15 +4,10 @@
 
 #pragma once
 
-#include <dsl/syntax.h>
+#include <luisa/luisa-compute.h>
 #include <gui/framerate.h>
 #include <gui/gl_texture.h>
 #include <gui/window.h>
-#include <runtime/context.h>
-#include <runtime/device.h>
-#include <runtime/event.h>
-#include <runtime/stream.h>
-#include <runtime/shader.h>
 
 namespace luisa::gui {
 

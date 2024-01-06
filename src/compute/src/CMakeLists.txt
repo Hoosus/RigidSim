@@ -7,66 +7,90 @@ if (WIN32)
             WIN32_LEAN_AND_MEAN=1)
     set(CMAKE_SHARED_MODULE_PREFIX "") # for MinGW/Cygwin etc.
     if (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-        add_compile_options(/MP /wd4005)
+        add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/wd4005>)
     endif ()
 endif ()
 
-option(LUISA_COMPUTE_ENABLE_DX "Enable DirectX backend" ON)
-option(LUISA_COMPUTE_ENABLE_METAL "Enable Metal backend" ON)
-option(LUISA_COMPUTE_ENABLE_CUDA "Enable CUDA backend" ON)
-option(LUISA_COMPUTE_ENABLE_ISPC "Enable ISPC backend" OFF)
-option(LUISA_COMPUTE_ENABLE_VULKAN "Enable Vulkan backend" OFF)
-option(LUISA_COMPUTE_ENABLE_LLVM "Enable LLVM backend" ON)
-
-option(LUISA_COMPUTE_ENABLE_PYTHON "Enable Python binding" ON)
-option(LUISA_COMPUTE_ENABLE_GUI "Enable GUI support" ON)
+function(luisa_compute_install target)
+    cmake_parse_arguments(INSTALL "" "" "SOURCES" ${ARGN})
+    install(TARGETS luisa-compute-${target} EXPORT LuisaComputeTargets
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endfunction()
 
 add_subdirectory(ext)
 
-add_library(luisa-compute-include INTERFACE)
-target_include_directories(luisa-compute-include INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_features(luisa-compute-include INTERFACE c_std_11 cxx_std_20)
-
 if (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     target_compile_options(luisa-compute-include INTERFACE
-            /wd4068 # Maxwell loves custom pragmas
-            /wd5105 # winbase.h: macro expansion producing 'defined' has undefined behavior
-            /Zc:preprocessor)
+            $<$<COMPILE_LANGUAGE:C,CXX>:/wd4068> # Maxwell loves custom pragmas
+            $<$<COMPILE_LANGUAGE:C,CXX>:/wd5105> # winbase.h: macro expansion producing 'defined' has undefined behavior
+            /Zc:preprocessor
+            /Zc:__cplusplus)
+elseif (MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(luisa-compute-include INTERFACE $<$<COMPILE_LANGUAGE:CXX>:/EHsc>)
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     target_compile_options(luisa-compute-include INTERFACE
             -Wno-invalid-offsetof
             -Wno-pragmas)
 endif ()
 
+add_subdirectory(api)
 add_subdirectory(core)
 add_subdirectory(vstl)
-add_subdirectory(meta)
 add_subdirectory(ast)
+add_subdirectory(rust)
 add_subdirectory(runtime)
-add_subdirectory(compile)
+add_subdirectory(ir)
 add_subdirectory(dsl)
-add_subdirectory(rtx)
+add_subdirectory(tensor)
+add_subdirectory(osl)
 add_subdirectory(gui)
 add_subdirectory(backends)
+add_subdirectory(ir_v2)
 
-add_library(luisa-compute INTERFACE luisa-compute.h)
-target_link_libraries(luisa-compute INTERFACE
+add_library(compute INTERFACE)
+
+target_link_libraries(compute INTERFACE
         luisa-compute-core
         luisa-compute-vstl
-        luisa-compute-meta
         luisa-compute-ast
-        luisa-compute-compile
-        luisa-compute-runtime
         luisa-compute-dsl
-        luisa-compute-rtx
+        luisa-compute-osl
+        luisa-compute-runtime
         luisa-compute-gui
-        luisa-compute-backends)
-add_library(luisa::compute ALIAS luisa-compute)
+        luisa-compute-api
+        luisa-compute-backends
+        luisa-compute-ir
+        luisa-compute-ir-v2)
 
-if (LUISA_COMPUTE_ENABLE_PYTHON)
-    add_subdirectory(py)
+if (LUISA_COMPUTE_ENABLE_CUDA_EXT_LCUB)
+    target_link_libraries(compute INTERFACE luisa-compute-cuda-ext-lcub)
 endif ()
+
+add_library(luisa::compute ALIAS compute)
+
+function(luisa_compute_add_executable name)
+    add_executable(${name} ${ARGN})
+    target_link_libraries(${name} PRIVATE luisa::compute)
+    install(TARGETS ${name} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endfunction()
 
 if (LUISA_COMPUTE_BUILD_TESTS)
     add_subdirectory(tests)
+endif ()
+
+install(TARGETS compute
+        EXPORT LuisaComputeTargets
+        PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/LuisaCompute)
+
+if (SKBUILD OR LUISA_COMPUTE_FORCE_PYTHON_BINDINGS)
+    add_subdirectory(py)
+endif ()
+
+if (NOT SKBUILD)
+    install(EXPORT LuisaComputeTargets
+            FILE LuisaComputeTargets.cmake
+            NAMESPACE luisa::
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LuisaCompute)
 endif ()

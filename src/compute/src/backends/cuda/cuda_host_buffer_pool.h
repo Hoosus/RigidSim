@@ -1,7 +1,3 @@
-//
-// Created by Mike on 8/1/2021.
-//
-
 #pragma once
 
 #include <cstddef>
@@ -9,12 +5,12 @@
 
 #include <cuda.h>
 
-#include <core/pool.h>
-#include <core/spin_mutex.h>
-#include <core/mathematics.h>
-#include <core/first_fit.h>
-#include <backends/cuda/cuda_error.h>
-#include <backends/cuda/cuda_callback_context.h>
+#include <luisa/core/pool.h>
+#include <luisa/core/spin_mutex.h>
+#include <luisa/core/mathematics.h>
+#include <luisa/core/first_fit.h>
+#include "cuda_error.h"
+#include "cuda_callback_context.h"
 
 namespace luisa::compute::cuda {
 
@@ -50,14 +46,14 @@ private:
     spin_mutex _mutex;
     std::byte *_memory{nullptr};
     FirstFit _first_fit;
-    bool _write_combined;
 
 public:
     CUDAHostBufferPool(size_t size, bool write_combined) noexcept;
     ~CUDAHostBufferPool() noexcept;
     [[nodiscard]] std::byte *memory() const noexcept { return _memory; }
-    [[nodiscard]] View *allocate(size_t size) noexcept;
+    [[nodiscard]] View *allocate(size_t size, bool fallback_if_failed = true) noexcept;
     void recycle(FirstFit::Node *node) noexcept;
 };
 
 }// namespace luisa::compute::cuda
+

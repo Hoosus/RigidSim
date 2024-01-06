@@ -1,8 +1,4 @@
-//
-// Created by Mike on 2021/11/30.
-//
-
-#include <gui/framerate.h>
+#include <luisa/gui/framerate.h>
 
 namespace luisa::compute {
 
@@ -48,3 +44,4 @@ double Framerate::report() const noexcept {
 }
 
 }
+

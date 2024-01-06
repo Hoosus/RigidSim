@@ -1,41 +1,56 @@
-//
-// Created by Mike Smith on 2021/4/13.
-//
-
 #pragma once
 
-#import <mutex>
+#include <luisa/core/stl/queue.h>
+#include <luisa/core/stl/string.h>
 
-#import <Metal/Metal.h>
-#import <MetalKit/MetalKit.h>
+#include <luisa/runtime/rhi/stream_tag.h>
+#include <luisa/runtime/command_list.h>
+#include "metal_api.h"
+#include "metal_stage_buffer_pool.h"
 
-#import <core/logging.h>
-#import <core/spin_mutex.h>
-#import <backends/metal/metal_host_buffer_pool.h>
+LUISA_EXTERN_C void luisa_compute_metal_stream_print_function_logs(MTL::LogContainer *logs);
 
 namespace luisa::compute::metal {
+
+class MetalEvent;
+class MetalTexture;
+class MetalSwapchain;
+class MetalCommandEncoder;
 
 class MetalStream {
 
 public:
-    static constexpr auto host_buffer_size = 64u * 1024u * 1024u;
+    using CallbackContainer = luisa::vector<MetalCallbackContext *>;
 
 private:
-    id<MTLCommandQueue> _handle;
-    __weak id<MTLCommandBuffer> _last{nullptr};
-    MetalHostBufferPool _upload_host_buffer_pool;
-    MetalHostBufferPool _download_host_buffer_pool;
-    dispatch_semaphore_t _sem;
+    MTL::CommandQueue *_queue;
+    spin_mutex _upload_pool_creation_mutex;
+    spin_mutex _download_pool_creation_mutex;
+    spin_mutex _callback_mutex;
+    spin_mutex _dispatch_mutex;
+    luisa::unique_ptr<MetalStageBufferPool> _upload_pool;
+    luisa::unique_ptr<MetalStageBufferPool> _download_pool;
+    luisa::queue<CallbackContainer> _callback_lists;
+
+protected:
+    void _do_dispatch(MetalCommandEncoder &encoder, CommandList &&list) noexcept;
+    virtual void _encode(MetalCommandEncoder &encoder, Command *command) noexcept;
 
 public:
-    explicit MetalStream(id<MTLDevice> device, uint max_command_buffers) noexcept;
-    ~MetalStream() noexcept;
-    [[nodiscard]] auto handle() const noexcept { return _handle; }
-    [[nodiscard]] id<MTLCommandBuffer> command_buffer() noexcept;
-    void dispatch(id<MTLCommandBuffer> command_buffer) noexcept;
-    void synchronize() noexcept;
-    [[nodiscard]] auto &upload_host_buffer_pool() noexcept { return _upload_host_buffer_pool; }
-    [[nodiscard]] auto &download_host_buffer_pool() noexcept { return _download_host_buffer_pool; }
+    MetalStream(MTL::Device *device, size_t max_commands) noexcept;
+    virtual ~MetalStream() noexcept;
+    virtual void signal(MetalEvent *event, uint64_t value) noexcept;
+    virtual void wait(MetalEvent *event, uint64_t value) noexcept;
+    virtual void synchronize() noexcept;
+    virtual void dispatch(CommandList &&list) noexcept;
+    void present(MetalSwapchain *swapchain, MetalTexture *image) noexcept;
+    virtual void set_name(luisa::string_view name) noexcept;
+    [[nodiscard]] auto device() const noexcept { return _queue->device(); }
+    [[nodiscard]] auto queue() const noexcept { return _queue; }
+    [[nodiscard]] MetalStageBufferPool *upload_pool() noexcept;
+    [[nodiscard]] MetalStageBufferPool *download_pool() noexcept;
+    virtual void submit(MTL::CommandBuffer *command_buffer, CallbackContainer &&callbacks) noexcept;
 };
 
 }// namespace luisa::compute::metal
+

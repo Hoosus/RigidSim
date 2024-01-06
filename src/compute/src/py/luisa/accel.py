@@ -1,18 +1,16 @@
-import lcapi
+from .dylibs import lcapi
 from . import globalvars
 from .globalvars import get_global_device
-from .struct import StructType
-from .array import ArrayType
 from .mathtypes import *
 from .func import func
-from .types import uint, to_lctype
-from .builtin import _builtin_call, _bitwise_cast
+from .types import to_lctype, BuiltinFuncBuilder, uint
+from .builtin import bitwise_cast, check_exact_signature
+from .hit import TriangleHit
+from .rayquery import rayQueryAllType, rayQueryAnyType, Ray
 
-# Ray
-Ray = StructType(16, _origin=ArrayType(3,float), t_min=float, _dir=ArrayType(3,float), t_max=float)
 
 @func
-def make_ray(origin: float3, direction: float3, t_min: float, t_max:float):
+def make_ray(origin: float3, direction: float3, t_min: float, t_max: float):
     r = Ray()
     r._origin[0] = origin[0]
     r._origin[1] = origin[1]
@@ -23,6 +21,7 @@ def make_ray(origin: float3, direction: float3, t_min: float, t_max:float):
     r.t_min = t_min
     r.t_max = t_max
     return r
+
 
 @func
 def inf_ray(origin: float3, direction: float3):
@@ -37,6 +36,7 @@ def inf_ray(origin: float3, direction: float3):
     r.t_max = 1e38
     return r
 
+
 @func
 def offset_ray_origin(p: float3, n: float3):
     origin = 1 / 32
@@ -44,94 +44,81 @@ def offset_ray_origin(p: float3, n: float3):
     int_scale = 256.0
     of_i = int3(int_scale * n)
     int_p = int3()
-    int_p.x = _bitwise_cast(int, p.x)
-    int_p.y = _bitwise_cast(int, p.y)
-    int_p.z = _bitwise_cast(int, p.z)
+    int_p.x = bitwise_cast(int, p.x)
+    int_p.y = bitwise_cast(int, p.y)
+    int_p.z = bitwise_cast(int, p.z)
     p_i_tmp = int_p + select(of_i, -of_i, p < 0.0)
     p_i = float3()
-    p_i.x = _bitwise_cast(float, p_i_tmp.x)
-    p_i.y = _bitwise_cast(float, p_i_tmp.y)
-    p_i.z = _bitwise_cast(float, p_i_tmp.z)
+    p_i.x = bitwise_cast(float, p_i_tmp.x)
+    p_i.y = bitwise_cast(float, p_i_tmp.y)
+    p_i.z = bitwise_cast(float, p_i_tmp.z)
     return select(p_i, p + float_scale * n, abs(p) < origin)
-
-@func
-def get_origin(self):
-    return float3(self._origin[0], self._origin[1], self._origin[2])
-Ray.add_method(get_origin)
-
-@func
-def get_dir(self):
-    return float3(self._dir[0], self._dir[1], self._dir[2])
-Ray.add_method(get_dir)
-
-@func
-def set_origin(self, val: float3):
-    self._origin[0] = val.x
-    self._origin[1] = val.y
-    self._origin[2] = val.z
-Ray.add_method(set_origin)
-
-@func
-def set_dir(self, val: float3):
-    self._dir[0] = val.x
-    self._dir[1] = val.y
-    self._dir[2] = val.z
-Ray.add_method(set_dir)
-
-
-
-# Hit
-Hit = StructType(16, inst=int, prim=int, bary=float2)
-UHit = StructType(16, inst=uint, prim=uint, bary=float2)
-
-@func
-def miss(self):
-    return self.inst == -1
-Hit.add_method(miss)
-
-@func
-def interpolate(self, a, b, c):
-    return (1.0 - self.bary.x - self.bary.y) * a + self.bary.x * b + self.bary.y * c
-Hit.add_method(interpolate)
-
-# Var<float> interpolate(Expr<Hit> hit, Expr<float> a, Expr<float> b, Expr<float> c) noexcept {
-#     return (1.0f - hit.bary.x - hit.bary.y) * a + hit.bary.x * b + hit.bary.y * c;
-# }
-
-# Var<float2> interpolate(Expr<Hit> hit, Expr<float2> a, Expr<float2> b, Expr<float2> c) noexcept {
-#     return (1.0f - hit.bary.x - hit.bary.y) * a + hit.bary.x * b + hit.bary.y * c;
-# }
-
-# Var<float3> interpolate(Expr<Hit> hit, Expr<float3> a, Expr<float3> b, Expr<float3> c) noexcept {
-#     return (1.0f - hit.bary.x - hit.bary.y) * a + hit.bary.x * b + hit.bary.y * c;
-# }
 
 
 class Accel:
-    def __init__(self):
-        self._accel = get_global_device().create_accel(lcapi.AccelUsageHint.FAST_TRACE)
+    def __init__(self, hint: lcapi.AccelUsageHint = lcapi.AccelUsageHint.FAST_BUILD, allow_compact: bool = False,
+                 allow_update: bool = False):
+        self._accel = get_global_device().create_accel(hint, allow_compact, allow_update)
         self.handle = self._accel.handle()
-
-    @staticmethod
-    def accel(list):
-        acc = Accel.empty()
-        for mesh in list:
-            if type(mesh) is tuple:
-                acc.add(*mesh)
-            else:
-                acc.add(mesh)
-        acc.update()
-        return acc
 
     @staticmethod
     def empty():
         return Accel()
 
-    def add(self, mesh, transform = float4x4(1), visible = True):
-        self._accel.emplace_back(mesh.handle, transform, visible)
+    def add(self, vertex_buffer, triangle_buffer, transform=float4x4(1), allow_compact: bool = True,
+            allow_update: bool = False, visibility_mask: int = -1, opaque: bool = True, user_id: int = 0):
+        self._accel.emplace_back(vertex_buffer.handle, 0, vertex_buffer.bytesize, to_lctype(vertex_buffer.dtype).size(),
+                                 triangle_buffer.handle, 0, triangle_buffer.bytesize, transform, allow_compact,
+                                 allow_update, visibility_mask, opaque, user_id)
 
-    def set(self, index, mesh, transform = float4x4(1), visible = True):
-        self._accel.set(index, mesh.handle, transform, visible)
+    def add_procedural(self, aabb_buffer, aabb_start_index: int = 0, aabb_count=None, transform=float4x4(1),
+                       allow_compact: bool = True, allow_update: bool = False, visibility_mask: int = -1,
+                       opaque: bool = True, user_id: int = 0):
+        assert (aabb_buffer.stride == 24)
+        var_aabb_count = None
+        if aabb_count is None:
+            var_aabb_count = aabb_buffer.size
+        else:
+            var_aabb_count = aabb_count
+        self._accel.emplace_procedural(aabb_buffer.handle, aabb_start_index, var_aabb_count, transform, allow_compact,
+                                       allow_update, visibility_mask, opaque, user_id)
+
+    def set(self, index, vertex_buffer, triangle_buffer, transform=float4x4(1), allow_compact: bool = True,
+            allow_update: bool = False, visibility_mask: int = -1, opaque: bool = True, user_id: int = 0):
+        self._accel.set(index, vertex_buffer.handle, 0, vertex_buffer.bytesize, to_lctype(vertex_buffer.dtype).size(),
+                        triangle_buffer.handle, 0, triangle_buffer.bytesize, transform, allow_compact, allow_update,
+                        visibility_mask, opaque, user_id)
+
+    def set_procedural(self, index: int, aabb_buffer, aabb_start_index: int = 0, aabb_count=None, transform=float4x4(1),
+                       allow_compact: bool = True, allow_update: bool = False, visibility_mask: int = -1,
+                       opaque: bool = True, user_id: int = 0):
+        assert (aabb_buffer.stride == 24)
+        var_aabb_count = None
+        if aabb_count is None:
+            var_aabb_count = aabb_buffer.size
+        else:
+            var_aabb_count = aabb_count
+        self._accel.set_procedural(index, aabb_buffer.handle, aabb_start_index, var_aabb_count, transform,
+                                   allow_compact, allow_update, visibility_mask, opaque, user_id)
+
+    def add_buffer_view(self, vertex_buffer, vertex_byteoffset, vertex_bytesize, vertex_stride, triangle_buffer,
+                        triangle_byteoffset, triangle_bytesize, transform=float4x4(1), allow_compact: bool = True,
+                        allow_update: bool = False, visibility_mask: int = -1, opaque: bool = True, user_id:int = 0):
+        assert (triangle_byteoffset & 15) == 0 and (vertex_byteoffset & 15) == 0
+        assert vertex_byteoffset + vertex_bytesize <= vertex_buffer.bytesize
+        assert triangle_byteoffset + triangle_bytesize <= triangle_buffer.bytesize
+        self._accel.emplace_back(vertex_buffer.handle, vertex_byteoffset, vertex_bytesize, vertex_stride,
+                                 triangle_buffer.handle, triangle_byteoffset, triangle_bytesize, transform,
+                                 allow_compact, allow_update, visibility_mask, opaque, user_id)
+
+    def set_buffer_view(self, index, vertex_buffer, vertex_byteoffset, vertex_bytesize, vertex_stride, triangle_buffer,
+                        triangle_byteoffset, triangle_bytesize, transform=float4x4(1), allow_compact: bool = True,
+                        allow_update: bool = False, visibility_mask: int = -1, opaque: bool = True, user_id:int = 0):
+        assert vertex_byteoffset + vertex_bytesize <= vertex_buffer.bytesize
+        assert triangle_byteoffset + triangle_bytesize <= triangle_buffer.bytesize
+        self._accel.set(index, vertex_buffer.handle, vertex_byteoffset, vertex_bytesize, vertex_stride,
+                        triangle_buffer.handle, triangle_byteoffset, triangle_bytesize, transform, allow_compact,
+                        allow_update, visibility_mask, opaque, user_id)
 
     def pop(self):
         self._accel.pop_back()
@@ -142,67 +129,101 @@ class Accel:
     def set_transform_on_update(self, index, transform: float4x4):
         self._accel.set_transform_on_update(index, transform)
 
-    def set_visibility_on_update(self, index, visible: bool):
-        self._accel.set_visibility_on_update(index, visible)
+    def set_visibility_on_update(self, index, visibility_mask: int):
+        self._accel.set_visibility_on_update(index, visibility_mask)
 
-    def update(self, sync = False, stream = None):
+    def set_user_id(self, index, user_id: int):
+        self._accel.set_user_id(index, user_id)
+
+    def update(self, sync=False, stream=None):
         if stream is None:
-            stream = globalvars.stream
-        globalvars.stream.add(self._accel.build_command(lcapi.AccelBuildRequest.PREFER_UPDATE))
+            stream = globalvars.vars.stream
+        stream.update_accel(self._accel)
         if sync:
             stream.synchronize()
 
-    @func
-    def trace_closest(self, ray: Ray):
-        uhit = _builtin_call(UHit, "TRACE_CLOSEST", self, ray)
-        hit = Hit()
-        hit.inst = _bitwise_cast(int, uhit.inst)
-        hit.prim = _bitwise_cast(int, uhit.prim)
-        hit.bary = uhit.bary
-        return hit
-
-    @func
-    def trace_any(self, ray: Ray):
-        return _builtin_call(bool, "TRACE_ANY", self, ray)
-
-    @func
-    def instance_transform(self, index: int):
-        return _builtin_call(float4x4, "INSTANCE_TO_WORLD_MATRIX", self, index)
-
-    @func
-    def set_instance_transform(self, index: int, transform: float4x4):
-        _builtin_call("SET_INSTANCE_TRANSFORM", self, index, transform)
-
-    @func
-    def set_instance_visibility(self, index: int, visible: bool):
-        _builtin_call("SET_INSTANCE_VISIBILITY", self, index, visible)
-
-accel = Accel.accel
-
-
-class Mesh:
-    def __init__(self, vertices, triangles):
-        # assert vertices.dtype == float3 or type(vertices.dtype) == StructType and vertices.dtype.membertype[0] == float3
-        assert to_lctype(vertices.dtype).size() >= to_lctype(float3).size()
-        assert triangles.dtype == int and triangles.size%3==0 or triangles.dtype == ArrayType(dtype=int, size=3)
-        self.vertices = vertices
-        self.triangles = triangles
-        # TODO: support buffer of structs or arrays
-        self.handle = get_global_device().impl().create_mesh(
-            self.vertices.handle, 0, to_lctype(vertices.dtype).size(), self.vertices.size,
-            self.triangles.handle, 0, self.triangles.size//3,
-            lcapi.AccelUsageHint.FAST_TRACE)
-        self.update()
-
-    def update(self, sync = False, stream = None):
+    def update_instance_buffer(self, sync=False, stream=None):
         if stream is None:
-            stream = globalvars.stream
-        globalvars.stream.add(lcapi.MeshBuildCommand.create(
-            self.handle, lcapi.AccelBuildRequest.PREFER_UPDATE,
-            self.vertices.handle, 0, self.vertices.size,
-            self.triangles.handle, 0, self.triangles.size//3))
+            stream = globalvars.vars.stream
+        stream.update_instance_buffer(self._accel)
         if sync:
             stream.synchronize()
 
-def mesh(vertices, triangles):
-    return Mesh(vertices, triangles)
+    @BuiltinFuncBuilder
+    def trace_closest(self, ray, vis_mask):
+        check_exact_signature([Ray, uint], [ray, vis_mask], "trace_closest")
+        expr = lcapi.builder().call(to_lctype(TriangleHit), lcapi.CallOp.RAY_TRACING_TRACE_CLOSEST, [self.expr, ray.expr, vis_mask.expr])
+        return TriangleHit, expr
+    
+    @BuiltinFuncBuilder
+    def trace_closest_cullback(self, ray, vis_mask):
+        check_exact_signature([Ray, uint], [ray, vis_mask], "trace_closest_cullback")
+        expr = lcapi.builder().call(to_lctype(TriangleHit), lcapi.CallOp.RAY_TRACING_TRACE_CLOSEST_CULL_BACKFACE, [self.expr, ray.expr, vis_mask.expr])
+        return TriangleHit, expr
+
+    @BuiltinFuncBuilder
+    def trace_any(self, ray, vis_mask):
+        check_exact_signature([Ray, uint], [ray, vis_mask], "trace_any")
+        expr = lcapi.builder().call(to_lctype(bool), lcapi.CallOp.RAY_TRACING_TRACE_ANY, [self.expr, ray.expr, vis_mask.expr])
+        return bool, expr
+    
+    @BuiltinFuncBuilder
+    def trace_any_cullback(self, ray, vis_mask):
+        check_exact_signature([Ray, uint], [ray, vis_mask], "trace_any_cullback")
+        expr = lcapi.builder().call(to_lctype(bool), lcapi.CallOp.RAY_TRACING_TRACE_ANY_CULL_BACKFACE, [self.expr, ray.expr, vis_mask.expr])
+        return bool, expr
+
+    @BuiltinFuncBuilder
+    def instance_transform(self, index):
+        check_exact_signature([uint], [index], "instance_transform")
+        expr = lcapi.builder().call(to_lctype(float4x4), lcapi.CallOp.RAY_TRACING_INSTANCE_TRANSFORM, [self.expr, index.expr])
+        return float4x4, expr
+    
+    @BuiltinFuncBuilder
+    def user_id(self, index):
+        check_exact_signature([uint], [index], "uesr_id")
+        expr = lcapi.builder().call(to_lctype(uint), lcapi.CallOp.RAY_TRACING_INSTANCE_USER_ID, [self.expr, index.expr])
+        return uint, expr
+    
+    @BuiltinFuncBuilder
+    def visibility_mask(self, index):
+        check_exact_signature([uint], [index], "mask")
+        expr = lcapi.builder().call(to_lctype(uint), lcapi.CallOp.RAY_TRACING_INSTANCE_VISIBILITY_MASK, [self.expr, index.expr])
+        return uint, expr
+
+    @BuiltinFuncBuilder
+    def set_instance_transform(self, index, transform):
+        check_exact_signature([uint, float4x4], [index, transform], "set_instance_transform")
+        expr = lcapi.builder().call(to_lctype(float4x4), lcapi.CallOp.RAY_TRACING_SET_INSTANCE_TRANSFORM, [self.expr, index.expr, transform.expr])
+        return float4x4, expr
+
+
+    @BuiltinFuncBuilder
+    def set_instance_visibility(self, index, visibility_mask):
+        check_exact_signature([uint, uint], [index, visibility_mask], "set_instance_visibility")
+        expr = lcapi.builder().call(lcapi.CallOp.RAY_TRACING_SET_INSTANCE_VISIBILITY, [self.expr, index.expr, visibility_mask.expr])
+        return None, expr
+
+    @BuiltinFuncBuilder
+    def set_instance_opacity(self, index, opacity):
+        check_exact_signature([uint, bool], [index, opacity], "set_instance_opacity")
+        expr = lcapi.builder().call(lcapi.CallOp.RAY_TRACING_SET_INSTANCE_OPACITY, [self.expr, index.expr, opacity.expr])
+        return None, expr
+    
+    @BuiltinFuncBuilder
+    def set_instance_user_id(self, index, opacity):
+        check_exact_signature([uint, uint], [index, opacity], "set_instance_opacity")
+        expr = lcapi.builder().call(lcapi.CallOp.RAY_TRACING_SET_INSTANCE_USER_ID, [self.expr, index.expr, opacity.expr])
+        return None, expr
+
+    @BuiltinFuncBuilder
+    def query_all(self, ray, vis_mask):
+        check_exact_signature([Ray, uint], [ray, vis_mask], "query_all")
+        expr = lcapi.builder().call(to_lctype(rayQueryAllType), lcapi.CallOp.RAY_TRACING_QUERY_ALL, [self.expr, ray.expr, vis_mask.expr])
+        return rayQueryAllType, expr
+
+    @BuiltinFuncBuilder
+    def query_any(self, ray, vis_mask: int):
+        check_exact_signature([Ray, uint], [ray, vis_mask], "query_any")
+        expr = lcapi.builder().call(to_lctype(rayQueryAnyType), lcapi.CallOp.RAY_TRACING_QUERY_ANY, [self.expr, ray.expr, vis_mask.expr])
+        return rayQueryAnyType, expr

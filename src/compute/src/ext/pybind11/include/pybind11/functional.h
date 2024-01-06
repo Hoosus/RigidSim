@@ -1,5 +1,5 @@
 /*
-    pybind11/functional.h: std::function<> support
+    pybind11/functional.h: luisa::function<> support
 
     Copyright (c) 2016 Wenzel Jakob <wenzel.jakob@epfl.ch>
 
@@ -17,8 +17,8 @@ PYBIND11_NAMESPACE_BEGIN(PYBIND11_NAMESPACE)
 PYBIND11_NAMESPACE_BEGIN(detail)
 
 template <typename Return, typename... Args>
-struct type_caster<std::function<Return(Args...)>> {
-    using type = std::function<Return(Args...)>;
+struct type_caster<luisa::function<Return(Args...)>> {
+    using type = luisa::function<Return(Args...)>;
     using retval_type = conditional_t<std::is_same<Return, void>::value, void_type, Return>;
     using function_type = Return (*)(Args...);
 
@@ -48,9 +48,16 @@ public:
          */
         if (auto cfunc = func.cpp_function()) {
             auto *cfunc_self = PyCFunction_GET_SELF(cfunc.ptr());
-            if (isinstance<capsule>(cfunc_self)) {
+            if (cfunc_self == nullptr) {
+                PyErr_Clear();
+            } else if (isinstance<capsule>(cfunc_self)) {
                 auto c = reinterpret_borrow<capsule>(cfunc_self);
-                auto *rec = (function_record *) c;
+
+                function_record *rec = nullptr;
+                // Check that we can safely reinterpret the capsule into a function_record
+                if (detail::is_function_record_capsule(c)) {
+                    rec = c.get_pointer<function_record>();
+                }
 
                 while (rec != nullptr) {
                     if (rec->is_stateless
@@ -110,7 +117,7 @@ public:
     template <typename Func>
     static handle cast(Func &&f_, return_value_policy policy, handle /* parent */) {
         if (!f_) {
-            return none().inc_ref();
+            return none().release();
         }
 
         auto result = f_.template target<function_type>();

@@ -1,50 +1,70 @@
-
 #include <DXRuntime/CommandBuffer.h>
 #include <DXRuntime/CommandAllocator.h>
 #include <DXRuntime/Device.h>
 #include <Resource/Buffer.h>
 #include <Shader/ComputeShader.h>
-#include <Shader/RTShader.h>
-namespace toolhub::directx {
-ID3D12GraphicsCommandList4 *CommandBufferBuilder::CmdList() const { return cb->cmdList.Get(); }
+#include <Shader/RasterShader.h>
+#include <Resource/SparseTexture.h>
+#include <luisa/core/logging.h>
+namespace lc::dx {
 CommandBuffer::CommandBuffer(CommandBuffer &&v)
     : cmdList(std::move(v.cmdList)),
       alloc(v.alloc) {
     v.alloc = nullptr;
 }
 CommandAllocator *CommandBuffer::GetAlloc() const { return static_cast<CommandAllocator *>(alloc); }
-
+void CommandBuffer::UpdateCommandBuffer(Device *device) {
+    if (!device->deviceSettings) return;
+    auto newCmdList = static_cast<ID3D12GraphicsCommandList4 *>(device->deviceSettings->BorrowCommandList(alloc->Type()));
+    if (newCmdList) {
+        cmdList = {newCmdList, false};
+    }
+}
 CommandBuffer::CommandBuffer(
     Device *device,
-    CommandAllocatorBase *alloc)
+    CommandAllocator *alloc)
     : alloc(alloc) {
-    ThrowIfFailed(device->device->CreateCommandList(
-        0,
-        alloc->Type(),
-        alloc->Allocator(),// Associated command allocator
-        nullptr,           // Initial PipelineStateObject
-        IID_PPV_ARGS(&cmdList)));
-    ThrowIfFailed(cmdList->Close());
+    if (device->deviceSettings) {
+        cmdList = {static_cast<ID3D12GraphicsCommandList4 *>(device->deviceSettings->BorrowCommandList(alloc->Type())), false};
+    }
+    if (!cmdList) {
+        ThrowIfFailed(device->device->CreateCommandList(
+            0,
+            alloc->Type(),
+            alloc->Allocator(),// Associated command allocator
+            nullptr,           // Initial PipelineStateObject
+            IID_PPV_ARGS(cmdList.GetAddressOf())));
+    }
+    if (cmdList.Contained())
+        ThrowIfFailed(cmdList->Close());
     isOpened = false;
 }
-void CommandBufferBuilder::SetResources(
+void CommandBufferBuilder::SetComputeResources(
     Shader const *s,
     vstd::span<const BindProperty> resources) {
-    for (auto &&r : resources) {
-        auto result = r.prop.visit_or(
-            false,
+    assert(resources.size() == s->Properties().size());
+    for (auto i : vstd::range(resources.size())) {
+        resources[i].visit(
             [&](auto &&b) {
-                return s->SetComputeResource(
-                    r.name,
+                s->SetComputeResource(
+                    i,
                     this,
                     b);
             });
-#ifdef _DEBUG
-        if (!result) {
-            VEngine_Log("Illegal resource setted"sv);
-            VSTL_ABORT();
-        }
-#endif
+    }
+}
+void CommandBufferBuilder::SetRasterResources(
+    Shader const *s,
+    vstd::span<const BindProperty> resources) {
+    assert(resources.size() == s->Properties().size());
+    for (auto i : vstd::range(resources.size())) {
+        resources[i].visit(
+            [&](auto &&b) {
+                s->SetRasterResource(
+                    i,
+                    this,
+                    b);
+            });
     }
 }
 void CommandBufferBuilder::DispatchCompute(
@@ -61,11 +81,68 @@ void CommandBufferBuilder::DispatchCompute(
         calc(dispatchId.z, blk.z)};
     auto c = cb->cmdList.Get();
     c->SetComputeRootSignature(cs->RootSig());
-    SetResources(cs, resources);
+    SetComputeResources(cs, resources);
     c->SetPipelineState(cs->Pso());
     c->Dispatch(dispId.x, dispId.y, dispId.z);
 }
-void CommandBufferBuilder::DispatchRT(
+void CommandBufferBuilder::DispatchCompute(
+    ComputeShader const *cs,
+    vstd::span<const uint3> dispatchSizes,
+    uint constBindPos,
+    vstd::span<const BindProperty> resources) {
+    auto c = cb->cmdList.Get();
+    c->SetComputeRootSignature(cs->RootSig());
+    SetComputeResources(cs, resources);
+    c->SetPipelineState(cs->Pso());
+    auto calc = [](uint disp, uint thd) {
+        return (disp + thd - 1) / thd;
+    };
+    uint3 blk = cs->BlockSize();
+    uint kernelId = 0;
+    for (auto dispatchId : dispatchSizes) {
+        uint3 dispId = {
+            calc(dispatchId.x, blk.x),
+            calc(dispatchId.y, blk.y),
+            calc(dispatchId.z, blk.z)};
+        uint4 constValue{dispatchId.x, dispatchId.y, dispatchId.z, kernelId};
+        c->SetComputeRoot32BitConstants(constBindPos, 4, &constValue, 0);
+        ++kernelId;
+        c->Dispatch(dispId.x, dispId.y, dispId.z);
+    }
+}
+void CommandBufferBuilder::SetRasterShader(
+    RasterShader const *s,
+    ID3D12PipelineState *state,
+    vstd::span<const BindProperty> resources) {
+    auto c = cb->CmdList();
+    c->SetPipelineState(state);
+    c->SetGraphicsRootSignature(s->RootSig());
+    SetRasterResources(s, resources);
+}
+void CommandBufferBuilder::DispatchComputeIndirect(
+    ComputeShader const *cs,
+    Buffer const &indirectBuffer,
+    uint32_t indirectOffset,
+    uint32_t maxIndirectCount,
+    vstd::span<const BindProperty> resources) {
+    auto c = cb->cmdList.Get();
+    auto res = indirectBuffer.GetResource();
+    size_t byteSize = indirectBuffer.GetByteSize();
+    size_t cmdSize = (byteSize - 4) / ComputeShader::DispatchIndirectStride;
+    assert(cmdSize >= 1);
+    c->SetComputeRootSignature(cs->RootSig());
+    SetComputeResources(cs, resources);
+    c->SetPipelineState(cs->Pso());
+    maxIndirectCount = std::min<uint>(maxIndirectCount, cmdSize - indirectOffset);
+    // TODO
+    c->ExecuteIndirect(
+        cs->CmdSig(),
+        maxIndirectCount,
+        res,
+        sizeof(uint) + static_cast<uint64_t>(indirectOffset) * ComputeShader::DispatchIndirectStride,
+        res, 0);
+}
+/*void CommandBufferBuilder::DispatchRT(
     RTShader const *rt,
     uint3 dispatchId,
     vstd::span<const BindProperty> resources) {
@@ -77,7 +154,7 @@ void CommandBufferBuilder::DispatchRT(
         dispatchId.x,
         dispatchId.y,
         dispatchId.z);
-}
+}*/
 void CommandBufferBuilder::CopyBuffer(
     Buffer const *src,
     Buffer const *dst,
@@ -94,38 +171,26 @@ void CommandBufferBuilder::CopyBuffer(
 }
 CommandBufferBuilder::CopyInfo CommandBufferBuilder::GetCopyTextureBufferSize(
     TextureBase *texture,
-    uint targetMip) {
-    uint width = texture->Width();
-    uint height = texture->Height();
-    uint depth = texture->Depth();
-    auto GetValue = [&](uint &v) {
-        v = std::max<uint>(1, v >> targetMip);
-    };
-    GetValue(width);
-    GetValue(height);
-    GetValue(depth);
-    auto pureLineSize = width * Resource::GetTexturePixelSize(texture->Format());
+    uint3 size) {
+    if (Resource::IsBCtex(texture->Format())) {
+        size.x /= 4;
+        size.y /= 4;
+    }
+    auto pureLineSize = size.x * Resource::GetTexturePixelSize(texture->Format());
     auto lineSize = CalcConstantBufferByteSize(pureLineSize);
     return {
-        size_t(pureLineSize * height * depth),
-        size_t(lineSize * height * depth),
+        size_t(pureLineSize * size.y * size.z),
+        size_t(lineSize * size.y * size.z),
         size_t(lineSize),
         size_t(pureLineSize)};
 }
 void CommandBufferBuilder::CopyBufferTexture(
     BufferView const &buffer,
     TextureBase *texture,
+    uint3 startCoord,
+    uint3 size,
     uint targetMip,
     BufferTextureCopy ope) {
-    uint width = texture->Width();
-    uint height = texture->Height();
-    uint depth = texture->Depth();
-    auto GetValue = [&](uint &v) {
-        v = std::max<uint>(1, v >> targetMip);
-    };
-    GetValue(width);
-    GetValue(height);
-    GetValue(depth);
     auto c = cb->cmdList.Get();
     D3D12_TEXTURE_COPY_LOCATION sourceLocation;
     sourceLocation.pResource = buffer.buffer->GetResource();
@@ -134,13 +199,10 @@ void CommandBufferBuilder::CopyBufferTexture(
     sourceLocation.PlacedFootprint.Footprint =
         {
             (DXGI_FORMAT)texture->Format(),//DXGI_FORMAT Format;
-            width,                         //uint Width;
-            height,                        //uint Height;
-            depth,                         //uint Depth;
-            static_cast<uint>(
-                CalcConstantBufferByteSize(
-                    width * Resource::GetTexturePixelSize(texture->Format())))//uint RowPitch;
-        };
+            size.x,                        //uint Width;
+            size.y,                        //uint Height;
+            size.z,                        //uint Depth;
+            static_cast<uint>(CalcAlign(size.x / (Resource::IsBCtex(texture->Format()) ? 4ull : 1ull) * Resource::GetTexturePixelSize(texture->Format()), D3D12_TEXTURE_DATA_PITCH_ALIGNMENT))};
     D3D12_TEXTURE_COPY_LOCATION destLocation;
     destLocation.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
     destLocation.SubresourceIndex = targetMip;
@@ -148,13 +210,13 @@ void CommandBufferBuilder::CopyBufferTexture(
     if (ope == BufferTextureCopy::BufferToTexture) {
         c->CopyTextureRegion(
             &destLocation,
-            0, 0, 0,
+            startCoord.x, startCoord.y, startCoord.z,
             &sourceLocation,
             nullptr);
     } else {
         c->CopyTextureRegion(
             &sourceLocation,
-            0, 0, 0,
+            startCoord.x, startCoord.y, startCoord.z,
             &destLocation,
             nullptr);
     }
@@ -164,7 +226,7 @@ void CommandBufferBuilder::Upload(BufferView const &buffer, void const *src) {
     static_cast<UploadBuffer const *>(uBuffer.buffer)
         ->CopyData(
             uBuffer.offset,
-            {reinterpret_cast<vbyte const *>(src), size_t(uBuffer.byteSize)});
+            {reinterpret_cast<uint8_t const *>(src), size_t(uBuffer.byteSize)});
     CopyBuffer(
         uBuffer.buffer,
         buffer.buffer,
@@ -204,19 +266,22 @@ void CommandBufferBuilder::Readback(BufferView const &buffer, void *dst) {
         buffer.byteSize);
     cb->GetAlloc()->ExecuteAfterComplete(
         [rBuffer, dst] {
+            assert(rBuffer.buffer->GetTag() == Resource::Tag::ReadbackBuffer);
             static_cast<ReadbackBuffer const *>(rBuffer.buffer)
                 ->CopyData(
                     rBuffer.offset,
-                    {reinterpret_cast<vbyte *>(dst), size_t(rBuffer.byteSize)});
+                    {reinterpret_cast<uint8_t *>(dst), size_t(rBuffer.byteSize)});
         });
 }
 void CommandBuffer::Reset() const {
     if (isOpened.exchange(true)) return;
-    ThrowIfFailed(cmdList->Reset(alloc->Allocator(), nullptr));
+    if (cmdList.Contained())
+        ThrowIfFailed(cmdList->Reset(alloc->Allocator(), nullptr));
 }
 void CommandBuffer::Close() const {
     if (!isOpened.exchange(false)) return;
-    ThrowIfFailed(cmdList->Close());
+    if (cmdList.Contained())
+        ThrowIfFailed(cmdList->Close());
 }
 CommandBufferBuilder::CommandBufferBuilder(CommandBuffer const *cb)
     : cb(cb) {
@@ -235,4 +300,4 @@ CommandBuffer::~CommandBuffer() {
     Close();
 }
 
-}// namespace toolhub::directx
+}// namespace lc::dx

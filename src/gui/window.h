@@ -9,8 +9,8 @@
 
 #include <imgui/imgui.h>
 
-#include <core/basic_types.h>
-#include <core/concepts.h>
+#include <luisa/core/basic_types.h>
+#include <luisa/core/concepts.h>
 #include <gui/hid.h>
 
 namespace luisa::gui {

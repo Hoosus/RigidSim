@@ -1,7 +1,3 @@
-//
-// Created by Mike Smith on 2021/2/2.
-//
-
 #include <string>
 #include <fstream>
 #include <memory>
@@ -9,16 +5,14 @@
 #include <atomic>
 #include <iostream>
 
-#include <spdlog/spdlog.h>
+#include <luisa/core/logging.h>
+#include <luisa/core/stl/hash.h>
+#include <luisa/ast/type.h>
+#include <luisa/ast/type_registry.h>
 
-#include <core/logging.h>
-#include <core/hash.h>
-#include <ast/type.h>
-#include <ast/type_registry.h>
-
-#include <ast/expression.h>
-#include <ast/statement.h>
-#include <ast/variable.h>
+#include <luisa/ast/expression.h>
+#include <luisa/ast/statement.h>
+#include <luisa/ast/variable.h>
 
 struct S1 {
     float x;
@@ -86,9 +80,9 @@ struct Impl : public Interface {};
 std::string_view tag_name(Type::Tag tag) noexcept {
     using namespace std::string_view_literals;
     if (tag == Type::Tag::BOOL) { return "bool"sv; }
-    if (tag == Type::Tag::FLOAT) { return "float"sv; }
-    if (tag == Type::Tag::INT) { return "int"sv; }
-    if (tag == Type::Tag::UINT) { return "uint"sv; }
+    if (tag == Type::Tag::FLOAT32) { return "float"sv; }
+    if (tag == Type::Tag::INT32) { return "int"sv; }
+    if (tag == Type::Tag::UINT32) { return "uint"sv; }
     if (tag == Type::Tag::VECTOR) { return "vector"sv; }
     if (tag == Type::Tag::MATRIX) { return "matrix"sv; }
     if (tag == Type::Tag::ARRAY) { return "array"sv; }
@@ -146,8 +140,8 @@ int main() {
 
     print(Type::from("array<array<vector<float,3>,5>,9>"));
 
-    auto hash_aa = luisa::hash64(type_aa.name());
-    auto hash_bb = luisa::hash64(type_bb.name());
+    auto hash_aa = luisa::hash_value(type_aa.name());
+    auto hash_bb = luisa::hash_value(type_bb.name());
     LUISA_INFO("{} {}", hash_aa, hash_bb);
 
     LUISA_INFO("{}", Type::of<std::array<float, 5>>()->description());
@@ -181,3 +175,4 @@ int main() {
 
     auto [m, n] = std::array{1, 2};
 }
+

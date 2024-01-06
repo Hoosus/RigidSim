@@ -1,52 +1,58 @@
-//
-// Created by Mike Smith on 2021/7/22.
-//
-
 #pragma once
 
-#import <vector>
-#import <Metal/Metal.h>
-
-#import <core/stl.h>
-#import <rtx/accel.h>
-#import <backends/metal/metal_mesh.h>
+#include <luisa/core/spin_mutex.h>
+#include <luisa/runtime/rhi/resource.h>
+#include <luisa/runtime/rhi/command.h>
+#include "../common/resource_tracker.h"
+#include "metal_api.h"
 
 namespace luisa::compute::metal {
 
 class MetalDevice;
-class MetalStream;
+class MetalPrimitive;
+class MetalCommandEncoder;
 
 class MetalAccel {
 
 public:
-    struct Resource {
-        id<MTLResource> handle;
-        [[nodiscard]] bool operator==(const Resource &rhs) const noexcept { return handle == rhs.handle; }
-    };
-    struct ResourceHash {
-        [[nodiscard]] uint64_t operator()(const Resource &r) const noexcept { return [r.handle hash]; }
+    static constexpr auto reserved_primitive_count = 1024u;
+
+private:
+    MTL::AccelerationStructure *_handle{nullptr};
+    MTL::Buffer *_instance_buffer{nullptr};
+    MTL::Buffer *_update_buffer{nullptr};
+    MTL::InstanceAccelerationStructureDescriptor *_descriptor{nullptr};
+    MTL::ComputePipelineState *_update;
+    luisa::vector<MetalPrimitive *> _primitives;
+    luisa::vector<MTL::Resource *> _resources;
+    NS::String *_name{nullptr};
+    AccelOption _option;
+    bool _requires_rebuild{true};
+    spin_mutex _mutex;
+
+public:
+    struct Binding {
+        MTL::ResourceID handle;
+        uint64_t instance_buffer;
     };
 
 private:
-    id<MTLComputePipelineState> _update_shader;
-    id<MTLAccelerationStructure> _handle{nullptr};
-    id<MTLBuffer> _instance_buffer{nullptr};
-    id<MTLBuffer> _update_buffer{nullptr};
-    MTLInstanceAccelerationStructureDescriptor *_descriptor{nullptr};
-    size_t _update_scratch_size{};
-    luisa::vector<const MetalMesh *> _meshes;
-    NSMutableArray<id<MTLAccelerationStructure>> *_mesh_handles;
-    luisa::unordered_set<Resource, ResourceHash, std::equal_to<>> _resources;
+    void _do_build(MetalCommandEncoder &encoder) noexcept;
+    void _do_update(MetalCommandEncoder &encoder) noexcept;
 
 public:
-    MetalAccel(id<MTLComputePipelineState> update_shader, AccelUsageHint hint) noexcept;
+    MetalAccel(MetalDevice *device, const AccelOption &option) noexcept;
+    ~MetalAccel() noexcept;
+    void build(MetalCommandEncoder &encoder, AccelBuildCommand *command) noexcept;
     [[nodiscard]] auto handle() const noexcept { return _handle; }
-    [[nodiscard]] id<MTLCommandBuffer> build(
-        MetalStream *stream, id<MTLCommandBuffer> command_buffer, uint instance_count,
-        AccelBuildRequest request, luisa::span<const AccelBuildCommand::Modification> mods) noexcept;
     [[nodiscard]] auto instance_buffer() const noexcept { return _instance_buffer; }
-    [[nodiscard]] auto descriptor() const noexcept { return _descriptor; }
-    [[nodiscard]] auto &resources() const noexcept { return _resources; }
+    [[nodiscard]] auto binding() const noexcept { return Binding{_handle->gpuResourceID(), _instance_buffer->gpuAddress()}; }
+    [[nodiscard]] auto pointer_to_handle() const noexcept { return const_cast<void *>(static_cast<const void *>(&_handle)); }
+    void set_name(luisa::string_view name) noexcept;
+    void mark_resource_usages(MetalCommandEncoder &encoder,
+                              MTL::ComputeCommandEncoder *command_encoder,
+                              MTL::ResourceUsage usage) noexcept;
 };
 
 }// namespace luisa::compute::metal
+

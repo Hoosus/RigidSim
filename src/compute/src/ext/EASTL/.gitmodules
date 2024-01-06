@@ -1,7 +1,7 @@
 [submodule "packages/EABase"]
 	path = packages/EABase
-	url = https://github.com/Mike-Leo-Smith/EABase.git
+	url = https://github.com/LuisaGroup/EABase.git
 	shallow = true
 [submodule "packages/mimalloc"]
 	path = packages/mimalloc
-	url = https://github.com/microsoft/mimalloc.git
+	url = https://github.com/LuisaGroup/mimalloc.git

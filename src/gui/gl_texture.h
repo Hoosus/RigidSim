@@ -9,10 +9,7 @@
 #include <span>
 #include <type_traits>
 
-#include <core/basic_types.h>
-#include <core/logging.h>
-#include <core/concepts.h>
-#include <runtime/pixel.h>
+#include <luisa/luisa-compute.h>
 
 namespace luisa::gui {
 

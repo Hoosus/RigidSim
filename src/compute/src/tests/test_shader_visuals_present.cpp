@@ -1,19 +1,11 @@
-//
-// Created by Mike Smith on 2021/6/25.
-//
-
-#include <iostream>
-
-#define GLFW_INCLUDE_NONE
-#define GLFW_EXPOSE_NATIVE_COCOA
-#import <GLFW/glfw3.h>
-#import <GLFW/glfw3native.h>
-
-#include <runtime/context.h>
-#include <runtime/device.h>
-#include <runtime/stream.h>
-#include <dsl/sugar.h>
-#include <gui/framerate.h>
+#include <luisa/core/clock.h>
+#include <luisa/core/logging.h>
+#include <luisa/runtime/context.h>
+#include <luisa/runtime/device.h>
+#include <luisa/runtime/stream.h>
+#include <luisa/runtime/swapchain.h>
+#include <luisa/dsl/sugar.h>
+#include <luisa/gui/window.h>
 
 using namespace luisa;
 using namespace luisa::compute;
@@ -21,11 +13,11 @@ using namespace luisa::compute;
 int main(int argc, char *argv[]) {
 
     Context context{argv[0]};
-    if(argc <= 1){
-        LUISA_INFO("Usage: {} <backend>. <backend>: cuda, dx, ispc, metal", argv[0]);
+    if (argc <= 1) {
+        LUISA_INFO("Usage: {} <backend>. <backend>: cuda, dx, cpu, metal", argv[0]);
         exit(1);
     }
-    auto device = context.create_device(argv[1]);
+    Device device = context.create_device(argv[1]);
 
     Callable comp = [](Float3 p) noexcept {
         p = asin(sin(p) * .9f);
@@ -43,10 +35,6 @@ int main(int argc, char *argv[]) {
 
     Callable wrot = [](Float4 p) noexcept {
         return make_float4(dot(p, make_float4(1.f)), p.yzw() + p.zwy() - p.wyz() - p.xxx()) * .5f;
-    };
-
-    Callable reflect = [](Float3 I, Float3 N) noexcept {
-        return I - 2.f * dot(N, I) * N;
     };
 
     Kernel2D render_kernel = [&](ImageFloat image, Float time) noexcept {
@@ -77,7 +65,7 @@ int main(int argc, char *argv[]) {
 
         auto norm = [&](Float3 p) noexcept {
             auto precis = ite(length(p) < 1.f, .005f, .01f);
-            auto k = make_float3x3(p, p, p) - make_float3x3(precis);
+            auto k = make_float3x3(p, p, p) - make_float3x3(precis, 0.f, 0.f, 0.f, precis, 0.f, 0.f, 0.f, precis);
             return normalize(scene(p) - make_float3(scene(k[0]), scene(k[1]), scene(k[2])));
         };
 
@@ -102,12 +90,12 @@ int main(int argc, char *argv[]) {
         auto dlglo = def(0.f);
         auto trg = def(false);
         auto dist = def(0.f);
-        $for(i, 80) {
+        $for (i, 80) {
             dist = scene(p);
             auto hit = dist * dist < 1e-6f;
             glo += .2f / (1.f + lazors * lazors * 20.f) * atten;
             dlglo += .2f / (1.f + doodad * doodad * 20.f) * atten;
-            $if(hit & ((sin(d3 * 45.f) < -0.4f & (dist != doodad)) | (dist == doodad & sin(pow(length(p2 * p2 * p2), .3f) * 120.f) > .4f)) & dist != lazors) {
+            $if (hit & ((sin(d3 * 45.f) < -0.4f & (dist != doodad)) | (dist == doodad & sin(pow(length(p2 * p2 * p2), .3f) * 120.f) > .4f)) & dist != lazors) {
                 trg = trg | dist == doodad;
                 hit = false;
                 auto n = norm(p);
@@ -118,7 +106,7 @@ int main(int argc, char *argv[]) {
             p += cam * dist;
             tlen += dist;
             fog += dist * atten / 30.f;
-            $if(hit) { $break; };
+            $if (hit) { $break; };
         };
         fog = smoothstep(0.f, 1.f, fog);
         auto lz = lazors == dist;
@@ -127,7 +115,7 @@ int main(int argc, char *argv[]) {
         auto n = norm(p);
         auto r = reflect(cam, n);
         auto ss = smoothstep(-.3f, .3f, scene(p + make_float3(.3f))) + .5f;
-        auto fact = length(sin(r * (ite(dl != 0.f, 4.f, 3.f))) * .5f + .5f) / sqrt(3.f) * .7f + .3f;
+        auto fact = length(sin(r * (ite(dl, 4.f, 3.f))) * .5f + .5f) / sqrt(3.f) * .7f + .3f;
         auto matcol = lerp(make_float3(.9f, .4f, .3f), make_float3(.3f, .4f, .8f), smoothstep(-1.f, 1.f, sin(d1 * 5.f + time * 2.f)));
         matcol = lerp(matcol, make_float3(.5f, .4f, 1.f), smoothstep(0.f, 1.f, sin(d2 * 5.f + time * 2.f)));
         matcol = ite(dl, lerp(1.f, matcol, .1f) * .2f + .1f, matcol);
@@ -152,28 +140,22 @@ int main(int argc, char *argv[]) {
 
     static constexpr auto width = 1280u;
     static constexpr auto height = 720u;
-    auto device_image = device.create_image<float>(PixelStorage::HALF4, width, height);
-    auto stream = device.create_stream();
+    Stream stream = device.create_stream(StreamTag::GRAPHICS);
+    Window window{"Display", make_uint2(width, height)};
+    auto swap_chain{device.create_swapchain(
+        window.native_handle(),
+        stream,
+        window.size(),
+        false, false, 2)};
+    auto device_image = device.create_image<float>(swap_chain.backend_storage(), width, height);
     stream << clear(device_image).dispatch(width, height);
 
-    glfwInit();
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    auto window = glfwCreateWindow(width, height, "@Party Concert Visuals 2020", nullptr, nullptr);
-    auto window_handle = reinterpret_cast<uint64_t>(glfwGetCocoaWindow(window));
-    auto swap_chain = device.create_swapchain(window_handle, stream, make_uint2(width, height));
-
     Clock clock;
-    Framerate framerate{32};
-    while (!glfwWindowShouldClose(window)) {
-        framerate.record();
-        LUISA_INFO("FPS: {}", framerate.report());
+    while (!window.should_close()) {
         auto time = static_cast<float>(clock.toc() * 1e-3);
         stream << shader(device_image, time).dispatch(width, height)
                << swap_chain.present(device_image);
-        glfwPollEvents();
-        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-            glfwSetWindowShouldClose(window, true);
-        }
+        window.poll_events();
     }
     stream << synchronize();
 }

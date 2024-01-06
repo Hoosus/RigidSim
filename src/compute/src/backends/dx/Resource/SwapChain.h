@@ -1,6 +1,6 @@
 #pragma once
 #include <Resource/Resource.h>
-namespace toolhub::directx {
+namespace lc::dx {
 class SwapChain : public Resource {
 public:
     ComPtr<ID3D12Resource> rt;
@@ -13,6 +13,5 @@ public:
     D3D12_RESOURCE_STATES GetInitState() const override {
         return D3D12_RESOURCE_STATE_PRESENT;
     }
-    VSTD_SELF_PTR
 };
-}// namespace toolhub::directx
+}// namespace lc::dx

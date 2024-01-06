@@ -1,127 +1,116 @@
-//
-// Created by Mike Smith on 2021/3/18.
-//
-
-#include "runtime/command_scheduler.h"
 #include <utility>
 
-#include <core/logging.h>
-#include <runtime/device.h>
-#include <runtime/stream.h>
+#include <luisa/core/logging.h>
+#include <luisa/core/magic_enum.h>
+#include <luisa/runtime/device.h>
+#include <luisa/runtime/stream.h>
 
 namespace luisa::compute {
 
-Stream Device::create_stream(bool for_present) noexcept {
-    return _create<Stream>(for_present);
+Stream Device::create_stream(StreamTag stream_tag) noexcept {
+    return _create<Stream>(stream_tag);
 }
 
-void Stream::_dispatch(CommandList list) noexcept {
-    if (auto size = list.size();
-        size > 1u && device()->requires_command_reordering()) {
-        auto commands = list.steal_commands();
-        Clock clock;
-        for (auto command : commands) {
-            command->accept(*reorder_visitor);
+void Stream::_dispatch(CommandList &&list) noexcept {
+    _check_is_valid();
+    if (!list.empty()) {
+#ifndef NDEBUG
+        for (auto &&i : list.commands()) {
+            auto cmd_tag = luisa::to_underlying(i->stream_tag());
+            auto s_tag = luisa::to_underlying(_stream_tag);
+            LUISA_ASSERT(cmd_tag >= s_tag,
+                         "Command of type {} in stream of type {} not allowed!",
+                         to_string(i->stream_tag()), to_string(_stream_tag));
         }
-        auto lists = reorder_visitor->command_lists();
-        LUISA_VERBOSE_WITH_LOCATION(
-            "Reordered {} commands into {} list(s) in {} ms.",
-            commands.size(), lists.size(), clock.toc());
-        device()->dispatch(handle(), lists);
-        reorder_visitor->clear();
-        for (auto cmd : commands) { cmd->recycle(); }
-    } else {
-        device()->dispatch(handle(), list);
+#endif
+        device()->dispatch(handle(), std::move(list));
     }
 }
 
-Stream::Delegate Stream::operator<<(Command *cmd) noexcept {
-    return Delegate{this} << cmd;
+Stream::Delegate Stream::operator<<(luisa::unique_ptr<Command> &&cmd) noexcept {
+    // No Delegate{this}<< here, may boom GCC
+    Delegate delegate{this};
+    return std::move(delegate) << std::move(cmd);
 }
 
-void Stream::_synchronize() noexcept { device()->synchronize_stream(handle()); }
-
-Stream &Stream::operator<<(Event::Signal signal) noexcept {
-    device()->signal_event(signal.handle, handle());
-    return *this;
+void Stream::_synchronize() noexcept {
+    _check_is_valid();
+    device()->synchronize_stream(handle());
 }
 
-Stream &Stream::operator<<(Event::Wait wait) noexcept {
-    device()->wait_event(wait.handle, handle());
-    return *this;
-}
+Stream::Stream(DeviceInterface *device, StreamTag stream_tag) noexcept
+    : Stream{device, stream_tag, device->create_stream(stream_tag)} {}
 
-Stream &Stream::operator<<(CommandBuffer::Synchronize) noexcept {
-    _synchronize();
-    return *this;
-}
-
-Stream::Stream(Device::Interface *device, bool for_present) noexcept
-    : Resource{device, Tag::STREAM, device->create_stream(for_present)},
-      _scheduler{luisa::make_unique<CommandScheduler>(device)},
-      reorder_visitor{luisa::make_unique<CommandReorderVisitor>(device)} {}
+Stream::Stream(DeviceInterface *device, StreamTag stream_tag, const ResourceCreationInfo &handle) noexcept
+    : Resource{device, Tag::STREAM, handle},
+      _stream_tag(stream_tag) {}
 
 Stream::Delegate::Delegate(Stream *s) noexcept : _stream{s} {}
-Stream::Delegate::~Delegate() noexcept { _commit(); }
+
+Stream::Delegate::~Delegate() noexcept {
+    _commit();
+}
 
 void Stream::Delegate::_commit() noexcept {
-    if (!_command_list.empty()) [[likely]] {
-        _stream->_dispatch(std::move(_command_list));
+    if (_stream != nullptr && !_command_list.empty()) {
+        *_stream << _command_list.commit();
     }
 }
 
 Stream::Delegate::Delegate(Stream::Delegate &&s) noexcept
     : _stream{s._stream},
-      _command_list{std::move(s._command_list)} { s._stream = nullptr; }
+      _command_list{std::move(s._command_list)} {
+    s._stream = nullptr;
+}
 
-Stream::Delegate &&Stream::Delegate::operator<<(Command *cmd) &&noexcept {
-    _command_list.append(cmd);
+Stream::Delegate Stream::Delegate::operator<<(luisa::unique_ptr<Command> &&cmd) && noexcept {
+    if (!_command_list.callbacks().empty()) { _commit(); }
+    _command_list.append(std::move(cmd));
     return std::move(*this);
 }
 
-Stream::Delegate &&Stream::Delegate::operator<<(Event::Signal signal) &&noexcept {
+Stream &Stream::Delegate::operator<<(CommandList::Commit &&commit) && noexcept {
     _commit();
-    *_stream << signal;
+    return *_stream << std::move(commit);
+}
+
+Stream::Delegate Stream::Delegate::operator<<(luisa::move_only_function<void()> &&f) && noexcept {
+    _command_list.add_callback(std::move(f));
     return std::move(*this);
 }
 
-Stream::Delegate &&Stream::Delegate::operator<<(Event::Wait wait) &&noexcept {
+Stream &Stream::Delegate::operator<<(Stream::Synchronize &&) && noexcept {
     _commit();
-    *_stream << wait;
-    return std::move(*this);
+    return *_stream << Stream::Synchronize{};
 }
 
-Stream::Delegate &&Stream::Delegate::operator<<(CommandBuffer::Synchronize s) &&noexcept {
+Stream &Stream::Delegate::operator<<(Stream::Commit &&) && noexcept {
     _commit();
-    *_stream << s;
-    return std::move(*this);
+    return *_stream;
 }
 
-Stream::Delegate &&Stream::Delegate::operator<<(SwapChain::Present p) &&noexcept {
-    _commit();
-    *_stream << p;
-    return std::move(*this);
+Stream::Delegate Stream::operator<<(luisa::move_only_function<void()> &&f) noexcept {
+    // No Delegate{this}<< here, may boom GCC
+    Delegate delegate{this};
+    return std::move(delegate) << std::move(f);
 }
 
-Stream::Delegate &&Stream::Delegate::operator<<(CommandBuffer::Commit) &&noexcept {
-    _commit();
-    return std::move(*this);
-}
-
-Stream::Delegate &&Stream::Delegate::operator<<(luisa::move_only_function<void()> &&f) &&noexcept {
-    _commit();
-    *_stream << std::move(f);
-    return std::move(*this);
-}
-
-Stream &Stream::operator<<(SwapChain::Present p) noexcept {
-    device()->present_display_in_stream(handle(), p.chain->handle(), p.frame.handle());
+Stream &Stream::operator<<(CommandList::Commit &&commit) noexcept {
+    _dispatch(std::move(commit).command_list());
     return *this;
 }
 
-Stream &Stream::operator<<(luisa::move_only_function<void()> &&f) noexcept {
-    device()->dispatch(handle(), std::move(f));
+Stream &Stream::operator<<(Stream::Synchronize &&) noexcept {
+    _synchronize();
     return *this;
+}
+
+void Stream::set_log_callback(const LogCallback &callback) noexcept {
+    device()->set_stream_log_callback(handle(), callback);
+}
+
+Stream::~Stream() noexcept {
+    if (*this) { device()->destroy_stream(handle()); }
 }
 
 }// namespace luisa::compute

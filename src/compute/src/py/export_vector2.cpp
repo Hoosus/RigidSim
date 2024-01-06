@@ -1,9 +1,10 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/operators.h>
-#include <dsl/builtin.h>
+#include <luisa/core/logging.h>
+#include <luisa/core/mathematics.h>
 
 namespace py = pybind11;
-using namespace luisa::compute;
+using namespace luisa;
 
 #define LUISA_EXPORT_ARITHMETIC_OP(T) \
     m##T \
@@ -150,3 +151,4 @@ void export_vector2(py::module &m) {
     LUISA_EXPORT_FLOAT_OP(float)
     LUISA_EXPORT_BOOL_OP(bool)
 }
+

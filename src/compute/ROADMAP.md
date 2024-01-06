@@ -1,7 +1,7 @@
 
 # Roadmap
 
-We list some of the (possible) future work here. If you have any ideas and suggestions, welcome to open an [issue](https://github.com/LuisaGroup/LuisaCompute/issues) or start a [discussion](https://github.com/LuisaGroup/LuisaCompute/discussions)!
+We list some possible future work here. If you have any ideas and suggestions, welcome to open an [issue](https://github.com/LuisaGroup/LuisaCompute/issues) or start a [discussion](https://github.com/LuisaGroup/LuisaCompute/discussions)!
 
  - ✅ Done and fully functional
  - ⚠️ Done but with minor issues
@@ -46,5 +46,4 @@ We list some of the (possible) future work here. If you have any ideas and sugge
  | DirectX                | ✅ (simulated `atomic<float>` support)                                                                                                                                                              | ✅                                                                 |
  | Metal                  | ✅ (simulated `atomic<float>` support)                                                                                                                                                              | ⚠️ (acceleration structure compaction disabled due to Metal bugs) |
  | Vulkan                 | 🚧 (will translate to SPIR-V)                                                                                                                                                                      | ⚠️ (needs testing)                                                |
- | ISPC<br />[Deprecated] | ⚠️ (no support for shared memory or `synchonize_block`; compiles very slow; simulated `atomic<float>` support)                                                                                     | ✅                                                                 |
- | LLVM                   | ⚠️ (scalar only; no support for shared memory or `synchronize_block`; simulated `atomic<float>` support)<br />🚧 (vectorization, with support for simulated shared memory and `synchronize_block`) | ✅                                                                 |
+ | LLVM                   | ✅ (scalar only; simulated `atomic<float>`, shared_memory, and `synchronize_block` support)<br />🚧 vectorization | ✅                                                                 |

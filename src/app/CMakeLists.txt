@@ -4,3 +4,4 @@ function(luisa_shader_toy_add_executable name)
 endfunction()
 
 luisa_shader_toy_add_executable(app)
+# luisa_shader_toy_add_executable(example)

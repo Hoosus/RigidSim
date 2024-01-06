@@ -2,7 +2,6 @@
 // Created by Mike Smith on 2021/6/27.
 //
 
-#include <core/basic_types.h>
 #include <gui/shader_toy.h>
 
 #if LUISA_SHADERTOY_HAS_OPENCV
@@ -80,8 +79,10 @@ ShaderToy::ShaderToy(int argc, const char *const *argv) noexcept
         if (is_first) { c = static_cast<char>(std::toupper(c)); }
         is_first = c == ' ';
     }
-    _device = luisa::make_unique<Device>(context.create_device(
-        backend, luisa::format("{{\"index\": {}}}", device_id)));
+    compute::DeviceConfig config;
+    config.device_index = 0;
+    config.inqueue_buffer_limit = false;
+    _device = luisa::make_unique<Device>(context.create_device(backend, &config));
     _stream = _device->create_stream();
 }
 

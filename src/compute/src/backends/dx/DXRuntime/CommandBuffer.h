@@ -1,14 +1,16 @@
 #pragma once
 #include <Resource/BindProperty.h>
 #include <Resource/TextureBase.h>
-namespace toolhub::directx {
+#include <DXRuntime/DxPtr.h>
+namespace lc::dx {
 class CommandAllocator;
-class CommandAllocatorBase;
 class Resource;
+class SparseTexture;
 class ComputeShader;
 class DescriptorHeap;
 class Shader;
 class RTShader;
+class RasterShader;
 class CommandBuffer;
 class CommandQueue;
 class CommandBufferBuilder {
@@ -19,14 +21,15 @@ private:
     CommandBufferBuilder(CommandBuffer const *cb);
     CommandBufferBuilder(CommandBufferBuilder const &) = delete;
     CommandBufferBuilder(CommandBufferBuilder &&);
-    void SetResources(
+    void SetComputeResources(
         Shader const *s,
         vstd::span<const BindProperty> resources);
-    DescriptorHeap const *currentDesc = nullptr;
+    void SetRasterResources(
+        Shader const *s,
+        vstd::span<const BindProperty> resources);
 
 public:
     CommandBuffer const *GetCB() const { return cb; }
-    ID3D12GraphicsCommandList4 *CmdList() const;
 
     void DispatchCompute(
         ComputeShader const *cs,
@@ -34,14 +37,20 @@ public:
         vstd::span<const BindProperty> resources);
     void DispatchCompute(
         ComputeShader const *cs,
-        uint3 dispatchId,
-        std::initializer_list<BindProperty> resources) {
-        DispatchCompute(
-            cs,
-            dispatchId,
-            vstd::span<const BindProperty>{resources.begin(), resources.size()});
-    }
-    void DispatchRT(
+        vstd::span<const uint3> dispatchSizes,
+        uint constBindPos,
+        vstd::span<const BindProperty> resources);
+    void SetRasterShader(
+        RasterShader const *s,
+        ID3D12PipelineState *state,
+        vstd::span<const BindProperty> resources);
+    void DispatchComputeIndirect(
+        ComputeShader const *cs,
+        Buffer const &indirectBuffer,
+        uint32_t indirectOffset,
+        uint32_t maxIndirectCount,
+        vstd::span<const BindProperty> resources);
+    /*void DispatchRT(
         RTShader const *rt,
         uint3 dispatchId,
         vstd::span<const BindProperty> resources);
@@ -53,7 +62,7 @@ public:
             rt,
             dispatchId,
             vstd::span<const BindProperty>{resources.begin(), resources.size()});
-    }
+    }*/
     void CopyBuffer(
         Buffer const *src,
         Buffer const *dst,
@@ -73,6 +82,8 @@ public:
     void CopyBufferTexture(
         BufferView const &buffer,
         TextureBase *texture,
+        uint3 startCoord,
+        uint3 size,
         uint targetMip,
         BufferTextureCopy ope);
     struct CopyInfo {
@@ -83,25 +94,26 @@ public:
     };
     static CopyInfo GetCopyTextureBufferSize(
         TextureBase *texture,
-        uint targetMip);
+        uint3 size);
     ~CommandBufferBuilder();
 };
 class CommandBuffer : public vstd::IOperatorNewBase {
     friend class CommandQueue;
     friend class CommandBufferBuilder;
     friend class CommandAllocator;
-    friend class CommandAllocatorBase;
     mutable std::atomic_bool isOpened;
     void Reset() const;
     void Close() const;
-    Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList4> cmdList;
-    CommandAllocatorBase *alloc;
+    DxPtr<ID3D12GraphicsCommandList4> cmdList;
+    CommandAllocator *alloc;
 
 public:
+    void UpdateCommandBuffer(Device *device);
     ID3D12GraphicsCommandList4 *CmdList() const { return cmdList.Get(); }
+    bool ContainedCmdList() const { return cmdList.Contained(); }
     CommandBuffer(
         Device *device,
-        CommandAllocatorBase *alloc);
+        CommandAllocator *alloc);
     CommandAllocator *GetAlloc() const;
     ~CommandBuffer();
     CommandBuffer(CommandBuffer &&v);
@@ -109,4 +121,4 @@ public:
     KILL_COPY_CONSTRUCT(CommandBuffer)
 };
 
-}// namespace toolhub::directx
+}// namespace lc::dx

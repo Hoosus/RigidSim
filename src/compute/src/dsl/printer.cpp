@@ -1,10 +1,5 @@
-//
-// Created by Mike Smith on 2022/2/13.
-//
-
-#include <runtime/device.h>
-#include <runtime/stream.h>
-#include <dsl/printer.h>
+#include <luisa/runtime/device.h>
+#include <luisa/dsl/printer.h>
 
 namespace luisa::compute {
 
@@ -17,20 +12,23 @@ Printer::Printer(Device &device, luisa::string_view name, size_t capacity) noexc
     _logger.set_level(spdlog::level::trace);
 }
 
-Command *Printer::reset() noexcept {
-    _reset_called = true;
+luisa::unique_ptr<Command> Printer::reset() noexcept {
+    _reset_called.store(true);
     static const auto zero = 0u;
     return _buffer.view(_buffer.size() - 1u, 1u).copy_from(&zero);
 }
 
-std::tuple<Command *, luisa::move_only_function<void()>, Command *>
-Printer::retrieve() noexcept {
-    if (!_reset_called) [[unlikely]] {
+std::tuple<luisa::unique_ptr<Command>,
+           luisa::move_only_function<void()>,
+           luisa::unique_ptr<Command>,
+           Stream::Synchronize>
+Printer::retrieve(bool abort_on_error) noexcept {
+    if (!_reset_called.load()) [[unlikely]] {
         LUISA_ERROR_WITH_LOCATION(
             "Printer results cannot be "
             "retrieved if never reset.");
     }
-    auto print = [this] {
+    auto print = [this, abort_on_error] {
         auto size = std::min(
             static_cast<uint>(_buffer.size() - 1u),
             _host_buffer.back());
@@ -43,14 +41,15 @@ Printer::retrieve() noexcept {
             if (offset > size) {
                 truncated = true;
             } else {
-                item.f(data);
+                item.f(data, abort_on_error);
             }
         }
         if (truncated) [[unlikely]] {
             LUISA_WARNING_WITH_LOCATION("Kernel log truncated.");
         }
     };
-    return {_buffer.copy_to(_host_buffer.data()), print, reset()};
+    auto copy = _buffer.copy_to(_host_buffer.data());
+    return {std::move(copy), print, reset(), synchronize()};
 }
 
 }// namespace luisa::compute

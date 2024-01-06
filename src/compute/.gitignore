@@ -211,7 +211,6 @@ tags
 
 ### VisualStudioCode template
 .vscode/*
-!.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
@@ -227,6 +226,7 @@ tags
 [Bb]in
 pyvenv.cfg
 .venv
+dylibs/
 pip-selfcheck.json
 
 ### JetBrains template
@@ -235,46 +235,9 @@ pip-selfcheck.json
 
 # User-specific stuff
 .idea/**
-.idea/**/workspace.xml
-.idea/**/tasks.xml
-.idea/**/usage.statistics.xml
-.idea/**/dictionaries
-.idea/**/shelf
-
-# Generated files
-.idea/**/contentModel.xml
-
-# Sensitive or high-churn files
-.idea/**/dataSources/
-.idea/**/dataSources.ids
-.idea/**/dataSources.local.xml
-.idea/**/sqlDataSources.xml
-.idea/**/dynamic.xml
-.idea/**/uiDesigner.xml
-.idea/**/dbnavigator.xml
-
-# Gradle
-.idea/**/gradle.xml
-.idea/**/libraries
-
-# Gradle and Maven with auto-import
-# When using Gradle or Maven with auto-import, you should exclude module files,
-# since they will be recreated, and may cause churn.  Uncomment if using
-# auto-import.
-# .idea/artifacts
-# .idea/compiler.xml
-# .idea/jarRepositories.xml
-# .idea/modules.xml
-# .idea/*.iml
-# .idea/modules
-# *.iml
-# *.ipr
 
 # CMake
 cmake-build-*/
-
-# Mongo Explorer plugin
-.idea/**/mongoSettings.xml
 
 # File-based project format
 *.iws
@@ -322,11 +285,8 @@ CMakeSettings.json
 
 **/__pycache__/**
 
-.vscode/
-
-#white list
-!src/backends/dx/dx_support/dxcompiler.dll
-!src/backends/dx/dx_support/dxil.dll
+# white list
+!src/backends/dx/dx_support/*.dll
 
 **/imgui.ini
 *.vcxproj
@@ -342,3 +302,23 @@ doxygen_output
 *.ll
 *.bc
 *.S
+
+# generated RUST bindings
+src/rust/luisa-compute-ir/target/**
+src/rust/luisa_compute_api_types/target/**
+src/rust/target/**
+
+# XMake
+.xmake/**
+src/ext/python311/**
+
+
+config.json
+options.cli
+options.*.cli
+scripts/options.lua
+scripts/options.cmake
+
+.deps/**
+FidelityFX-FSR2/
+xess/

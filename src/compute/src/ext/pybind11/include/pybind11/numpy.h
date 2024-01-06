@@ -36,6 +36,8 @@ static_assert(std::is_signed<Py_intptr_t>::value, "Py_intptr_t must be signed");
 
 PYBIND11_NAMESPACE_BEGIN(PYBIND11_NAMESPACE)
 
+PYBIND11_WARNING_DISABLE_MSVC(4127)
+
 class array; // Forward declaration
 
 PYBIND11_NAMESPACE_BEGIN(detail)
@@ -537,7 +539,7 @@ PYBIND11_NAMESPACE_END(detail)
 
 class dtype : public object {
 public:
-    PYBIND11_OBJECT_DEFAULT(dtype, object, detail::npy_api::get().PyArrayDescr_Check_);
+    PYBIND11_OBJECT_DEFAULT(dtype, object, detail::npy_api::get().PyArrayDescr_Check_)
 
     explicit dtype(const buffer_info &info) {
         dtype descr(_dtype_from_pep3118()(pybind11::str(info.format)));
@@ -562,6 +564,8 @@ public:
         m_ptr = from_args(args).release().ptr();
     }
 
+    /// Return dtype for the given typenum (one of the NPY_TYPES).
+    /// https://numpy.org/devdocs/reference/c-api/array.html#c.PyArray_DescrFromType
     explicit dtype(int typenum)
         : object(detail::npy_api::get().PyArray_DescrFromType_(typenum), stolen_t{}) {
         if (m_ptr == nullptr) {
@@ -645,7 +649,7 @@ private:
                 : name{std::move(name)}, format{std::move(format)}, offset{std::move(offset)} {};
         };
         auto field_dict = attr("fields").cast<dict>();
-        std::vector<field_descr> field_descriptors;
+        luisa::vector<field_descr> field_descriptors;
         field_descriptors.reserve(field_dict.size());
 
         for (auto field : field_dict.attr("items")()) {
@@ -875,7 +879,7 @@ public:
      */
     template <typename T, ssize_t Dims = -1>
     detail::unchecked_mutable_reference<T, Dims> mutable_unchecked() & {
-        if (PYBIND11_SILENCE_MSVC_C4127(Dims >= 0) && ndim() != Dims) {
+        if (Dims >= 0 && ndim() != Dims) {
             throw std::domain_error("array has incorrect number of dimensions: "
                                     + std::to_string(ndim()) + "; expected "
                                     + std::to_string(Dims));
@@ -893,7 +897,7 @@ public:
      */
     template <typename T, ssize_t Dims = -1>
     detail::unchecked_reference<T, Dims> unchecked() const & {
-        if (PYBIND11_SILENCE_MSVC_C4127(Dims >= 0) && ndim() != Dims) {
+        if (Dims >= 0 && ndim() != Dims) {
             throw std::domain_error("array has incorrect number of dimensions: "
                                     + std::to_string(ndim()) + "; expected "
                                     + std::to_string(Dims));
@@ -1004,7 +1008,7 @@ protected:
     /// Create array from any object -- always returns a new reference
     static PyObject *raw_array(PyObject *ptr, int ExtraFlags = 0) {
         if (ptr == nullptr) {
-            PyErr_SetString(PyExc_ValueError, "cannot create a pybind11::array from a nullptr");
+            set_error(PyExc_ValueError, "cannot create a pybind11::array from a nullptr");
             return nullptr;
         }
         return detail::npy_api::get().PyArray_FromAny_(
@@ -1151,7 +1155,7 @@ protected:
     /// Create array from any object -- always returns a new reference
     static PyObject *raw_array_t(PyObject *ptr) {
         if (ptr == nullptr) {
-            PyErr_SetString(PyExc_ValueError, "cannot create a pybind11::array_t from a nullptr");
+            set_error(PyExc_ValueError, "cannot create a pybind11::array_t from a nullptr");
             return nullptr;
         }
         return detail::npy_api::get().PyArray_FromAny_(ptr,
@@ -1281,12 +1285,16 @@ private:
 public:
     static constexpr int value = values[detail::is_fmt_numeric<T>::index];
 
-    static pybind11::dtype dtype() {
-        if (auto *ptr = npy_api::get().PyArray_DescrFromType_(value)) {
-            return reinterpret_steal<pybind11::dtype>(ptr);
-        }
-        pybind11_fail("Unsupported buffer format!");
-    }
+    static pybind11::dtype dtype() { return pybind11::dtype(/*typenum*/ value); }
+};
+
+template <typename T>
+struct npy_format_descriptor<T, enable_if_t<is_same_ignoring_cvref<T, PyObject *>::value>> {
+    static constexpr auto name = const_name("object");
+
+    static constexpr int value = npy_api::NPY_OBJECT_;
+
+    static pybind11::dtype dtype() { return pybind11::dtype(/*typenum*/ value); }
 };
 
 #define PYBIND11_DECL_CHAR_FMT                                                                    \
@@ -1352,7 +1360,7 @@ PYBIND11_NOINLINE void register_structured_dtype(any_container<field_descriptor>
 
     // Use ordered fields because order matters as of NumPy 1.14:
     // https://docs.scipy.org/doc/numpy/release.html#multiple-field-indexing-assignment-of-structured-arrays
-    std::vector<field_descriptor> ordered_fields(std::move(fields));
+    luisa::vector<field_descriptor> ordered_fields(std::move(fields));
     std::sort(
         ordered_fields.begin(),
         ordered_fields.end(),
@@ -1401,7 +1409,7 @@ PYBIND11_NOINLINE void register_structured_dtype(any_container<field_descriptor>
     oss << '}';
     auto format_str = oss.str();
 
-    // Sanity check: verify that NumPy properly parses our buffer format string
+    // Smoke test: verify that NumPy properly parses our buffer format string
     auto &api = npy_api::get();
     auto arr = array(buffer_info(nullptr, itemsize, format_str, 1));
     if (!api.PyArray_EquivTypes_(dtype_ptr, arr.dtype().ptr())) {
@@ -1469,7 +1477,7 @@ private:
         }
 
 // Extract name, offset and format descriptor for a struct field
-#    define PYBIND11_FIELD_DESCRIPTOR(T, Field) PYBIND11_FIELD_DESCRIPTOR_EX(T, Field, #    Field)
+#    define PYBIND11_FIELD_DESCRIPTOR(T, Field) PYBIND11_FIELD_DESCRIPTOR_EX(T, Field, #Field)
 
 // The main idea of this macro is borrowed from https://github.com/swansontec/map-macro
 // (C) William Swanson, Paul Fultz
@@ -1506,7 +1514,7 @@ private:
 
 #    define PYBIND11_NUMPY_DTYPE(Type, ...)                                                       \
         ::pybind11::detail::npy_format_descriptor<Type>::register_dtype(                          \
-            ::std::vector<::pybind11::detail::field_descriptor>{                                  \
+            ::luisa::vector<::pybind11::detail::field_descriptor>{                                  \
                 PYBIND11_MAP_LIST(PYBIND11_FIELD_DESCRIPTOR, Type, __VA_ARGS__)})
 
 #    if defined(_MSC_VER) && !defined(__clang__)
@@ -1528,14 +1536,14 @@ private:
 
 #    define PYBIND11_NUMPY_DTYPE_EX(Type, ...)                                                    \
         ::pybind11::detail::npy_format_descriptor<Type>::register_dtype(                          \
-            ::std::vector<::pybind11::detail::field_descriptor>{                                  \
+            ::luisa::vector<::pybind11::detail::field_descriptor>{                                  \
                 PYBIND11_MAP2_LIST(PYBIND11_FIELD_DESCRIPTOR_EX, Type, __VA_ARGS__)})
 
 #endif // __CLION_IDE__
 
 class common_iterator {
 public:
-    using container_type = std::vector<ssize_t>;
+    using container_type = luisa::vector<ssize_t>;
     using value_type = container_type::value_type;
     using size_type = container_type::size_type;
 
@@ -1563,7 +1571,7 @@ private:
 template <size_t N>
 class multi_array_iterator {
 public:
-    using container_type = std::vector<ssize_t>;
+    using container_type = luisa::vector<ssize_t>;
 
     multi_array_iterator(const std::array<buffer_info, N> &buffers, const container_type &shape)
         : m_shape(shape.size()), m_index(shape.size(), 0), m_common_iterator() {
@@ -1644,7 +1652,7 @@ enum class broadcast_trivial { non_trivial, c_trivial, f_trivial };
 // (`f_trivial`) storage buffer; returns `non_trivial` otherwise.
 template <size_t N>
 broadcast_trivial
-broadcast(const std::array<buffer_info, N> &buffers, ssize_t &ndim, std::vector<ssize_t> &shape) {
+broadcast(const std::array<buffer_info, N> &buffers, ssize_t &ndim, luisa::vector<ssize_t> &shape) {
     ndim = std::accumulate(
         buffers.begin(), buffers.end(), ssize_t(0), [](ssize_t res, const buffer_info &buf) {
             return std::max(res, buf.ndim);
@@ -1753,7 +1761,7 @@ template <typename Func, typename Return, typename... Args>
 struct vectorize_returned_array {
     using Type = array_t<Return>;
 
-    static Type create(broadcast_trivial trivial, const std::vector<ssize_t> &shape) {
+    static Type create(broadcast_trivial trivial, const luisa::vector<ssize_t> &shape) {
         if (trivial == broadcast_trivial::f_trivial) {
             return array_t<Return, array::f_style>(shape);
         }
@@ -1772,7 +1780,7 @@ template <typename Func, typename... Args>
 struct vectorize_returned_array<Func, void, Args...> {
     using Type = none;
 
-    static Type create(broadcast_trivial, const std::vector<ssize_t> &) { return none(); }
+    static Type create(broadcast_trivial, const luisa::vector<ssize_t> &) { return none(); }
 
     static void *mutable_data(Type &) { return nullptr; }
 
@@ -1849,7 +1857,7 @@ private:
 
         /* Determine dimensions parameters of output array */
         ssize_t nd = 0;
-        std::vector<ssize_t> shape(0);
+        luisa::vector<ssize_t> shape(0);
         auto trivial = broadcast(buffers, nd, shape);
         auto ndim = (size_t) nd;
 
@@ -1866,8 +1874,13 @@ private:
 
         auto result = returned_array::create(trivial, shape);
 
+        PYBIND11_WARNING_PUSH
+#ifdef PYBIND11_DETECTED_CLANG_WITH_MISLEADING_CALL_STD_MOVE_EXPLICITLY_WARNING
+        PYBIND11_WARNING_DISABLE_CLANG("-Wreturn-std-move")
+#endif
+
         if (size == 0) {
-            return std::move(result);
+            return result;
         }
 
         /* Call the function */
@@ -1878,7 +1891,8 @@ private:
             apply_trivial(buffers, params, mutable_data, size, i_seq, vi_seq, bi_seq);
         }
 
-        return std::move(result);
+        return result;
+        PYBIND11_WARNING_POP
     }
 
     template <size_t... Index, size_t... VIndex, size_t... BIndex>
@@ -1912,7 +1926,7 @@ private:
                          std::array<void *, N> &params,
                          Return *out,
                          size_t size,
-                         const std::vector<ssize_t> &output_shape,
+                         const luisa::vector<ssize_t> &output_shape,
                          index_sequence<Index...>,
                          index_sequence<VIndex...>,
                          index_sequence<BIndex...>) {

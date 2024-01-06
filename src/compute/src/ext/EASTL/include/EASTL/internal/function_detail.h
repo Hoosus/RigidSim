@@ -119,7 +119,7 @@ namespace eastl
 			};
 
 			// Functor can be allocated inplace
-			template <typename Functor, typename = void>
+			template <typename Functor, bool isCopyable, typename = void>
 			class function_manager_base
 			{
 			public:
@@ -138,7 +138,7 @@ namespace eastl
 
 				static void CopyFunctor(FunctorStorageType& to, const FunctorStorageType& from)
 				{
-					if constexpr (std::is_copy_constructible_v<Functor>)
+					if constexpr (isCopyable)
 					{
 						::new (GetFunctorPtr(to)) Functor(*GetFunctorPtr(from));
 					}
@@ -153,36 +153,64 @@ namespace eastl
 				                     void* from,
 				                     typename function_base_detail::ManagerOperations ops) EA_NOEXCEPT
 				{
-					switch (ops)
+					if constexpr (isCopyable)
 					{
-						case MGROPS_DESTRUCT_FUNCTOR:
+						switch (ops)
 						{
-							DestructFunctor(*static_cast<FunctorStorageType*>(to));
-						}
-						break;
-						case MGROPS_COPY_FUNCTOR:
-						{
-							CopyFunctor(*static_cast<FunctorStorageType*>(to),
-							            *static_cast<const FunctorStorageType*>(from));
-						}
-						break;
-						case MGROPS_MOVE_FUNCTOR:
-						{
-							MoveFunctor(*static_cast<FunctorStorageType*>(to), *static_cast<FunctorStorageType*>(from));
-							DestructFunctor(*static_cast<FunctorStorageType*>(from));
-						}
-						break;
-						default:
+							case MGROPS_DESTRUCT_FUNCTOR:
+							{
+								DestructFunctor(*static_cast<FunctorStorageType*>(to));
+							}
 							break;
+							case MGROPS_COPY_FUNCTOR:
+							{
+
+								CopyFunctor(*static_cast<FunctorStorageType*>(to),
+								            *static_cast<const FunctorStorageType*>(from));
+							}
+							break;
+
+							case MGROPS_MOVE_FUNCTOR:
+							{
+								MoveFunctor(*static_cast<FunctorStorageType*>(to),
+								            *static_cast<FunctorStorageType*>(from));
+								DestructFunctor(*static_cast<FunctorStorageType*>(from));
+							}
+							break;
+							default:
+								break;
+						}
 					}
+					else
+					{
+						switch (ops)
+						{
+							case MGROPS_DESTRUCT_FUNCTOR:
+							{
+								DestructFunctor(*static_cast<FunctorStorageType*>(to));
+							}
+							break;
+							case MGROPS_MOVE_FUNCTOR:
+							{
+								MoveFunctor(*static_cast<FunctorStorageType*>(to),
+								            *static_cast<FunctorStorageType*>(from));
+								DestructFunctor(*static_cast<FunctorStorageType*>(from));
+							}
+							break;
+							default:
+								break;
+						}
+					}
+
 					return nullptr;
 				}
 			};
 
 			// Functor is allocated on the heap
-			template <typename Functor>
+			template <typename Functor, bool isCopyable>
 			class function_manager_base<
 			    Functor,
+			    isCopyable,
 			    typename eastl::enable_if<!is_functor_inplace_allocatable<Functor, SIZE_IN_BYTES>::value>::type>
 			{
 			public:
@@ -228,7 +256,7 @@ namespace eastl
 
 				static void CopyFunctor(FunctorStorageType& to, const FunctorStorageType& from)
 				{
-					if constexpr (std::is_copy_constructible_v<Functor>)
+					if constexpr (isCopyable)
 					{
 						auto& allocator = *EASTLAllocatorDefault();
 						Functor* func = static_cast<Functor*>(allocator.allocate(sizeof(Functor), alignof(Functor), 0));
@@ -265,8 +293,11 @@ namespace eastl
 						break;
 						case MGROPS_COPY_FUNCTOR:
 						{
-							CopyFunctor(*static_cast<FunctorStorageType*>(to),
-							            *static_cast<const FunctorStorageType*>(from));
+							if constexpr (isCopyable)
+							{
+								CopyFunctor(*static_cast<FunctorStorageType*>(to),
+								            *static_cast<const FunctorStorageType*>(from));
+							}
 						}
 						break;
 						case MGROPS_MOVE_FUNCTOR:
@@ -282,11 +313,11 @@ namespace eastl
 				}
 			};
 
-			template <typename Functor, typename R, typename... Args>
-			class function_manager final : public function_manager_base<Functor>
+			template <typename Functor, bool isCopyable, typename R, typename... Args>
+			class function_manager final : public function_manager_base<Functor, isCopyable>
 			{
 			public:
-				using Base = function_manager_base<Functor>;
+				using Base = function_manager_base<Functor, isCopyable>;
 
 #if EASTL_RTTI_ENABLED
 				static void* GetTypeInfo() EA_NOEXCEPT
@@ -426,11 +457,11 @@ namespace eastl
 
 		/// function_detail
 		///
-		template <int, typename>
+		template <int, bool isCopyable, typename>
 		class function_detail;
 
-		template <int SIZE_IN_BYTES, typename R, typename... Args>
-		class function_detail<SIZE_IN_BYTES, R(Args...)> : public function_base_detail<SIZE_IN_BYTES>
+		template <int SIZE_IN_BYTES, bool isCopyable, typename R, typename... Args>
+		class function_detail<SIZE_IN_BYTES, isCopyable, R(Args...)> : public function_base_detail<SIZE_IN_BYTES>
 		{
 		public:
 			using result_type = R;
@@ -633,7 +664,8 @@ namespace eastl
 			void CreateForwardFunctor(Functor&& functor)
 			{
 				using DecayedFunctorType = typename eastl::decay<Functor>::type;
-				using FunctionManagerType = typename Base::template function_manager<DecayedFunctorType, R, Args...>;
+				using FunctionManagerType =
+				    typename Base::template function_manager<DecayedFunctorType, isCopyable, R, Args...>;
 
 				if (internal::is_null(functor))
 				{

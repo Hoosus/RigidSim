@@ -224,7 +224,7 @@ namespace eastl
 
 			if (engaged)
 			{
-				auto* pOtherValue = reinterpret_cast<const T*>(eastl::addressof(other.val));
+				auto* pOtherValue = std::launder(reinterpret_cast<const T*>(eastl::addressof(other.val)));
 				::new (eastl::addressof(val)) value_type(*pOtherValue);
 			}
 		}
@@ -235,7 +235,7 @@ namespace eastl
 
 			if (engaged)
 			{
-				auto* pOtherValue = reinterpret_cast<T*>(eastl::addressof(other.val));
+				auto* pOtherValue = std::launder(reinterpret_cast<T*>(eastl::addressof(other.val)));
 				::new (eastl::addressof(val)) value_type(eastl::move(*pOtherValue));
 			}
 		}
@@ -271,7 +271,7 @@ namespace eastl
 
 	    inline optional& operator=(const optional& other)
 		{
-			auto* pOtherValue = reinterpret_cast<const T*>(eastl::addressof(other.val));
+			auto* pOtherValue = std::launder(reinterpret_cast<const T*>(eastl::addressof(other.val)));
 			if (engaged == other.engaged)
 			{
 				if (engaged)
@@ -297,7 +297,7 @@ namespace eastl
 	        EA_NOEXCEPT_IF(EA_NOEXCEPT(eastl::is_nothrow_move_assignable<value_type>::value &&
 	                                       eastl::is_nothrow_move_constructible<value_type>::value))
 	    {
-			auto* pOtherValue = reinterpret_cast<T*>(eastl::addressof(other.val));
+			auto* pOtherValue = std::launder(reinterpret_cast<T*>(eastl::addressof(other.val)));
 			if (engaged == other.engaged)
 			{
 				if (engaged)
@@ -320,6 +320,7 @@ namespace eastl
 	    }
 
 	    template <class U, typename = typename eastl::enable_if<eastl::is_same<eastl::decay_t<U>, T>::value>::type>
+		requires(eastl::is_constructible_v<value_type, U&&>)
 	    inline optional& operator=(U&& u)
 	    {
 			if(engaged)
@@ -360,6 +361,7 @@ namespace eastl
 		inline const T&& operator*() const&&  { return get_rvalue_ref(); }
 
 		template <class... Args>
+		requires(eastl::is_constructible_v<value_type, Args&&...>)
 		void emplace(Args&&... args)
 		{
 			if (engaged)
@@ -372,6 +374,7 @@ namespace eastl
 		}
 
 		template <class U, class... Args>
+		requires(eastl::is_constructible_v<value_type, Args&&...>)
 		void emplace(std::initializer_list<U> ilist, Args&&... args)
 		{
 			if (engaged)
@@ -432,7 +435,7 @@ namespace eastl
 			#elif EASTL_ASSERT_ENABLED
 				EASTL_ASSERT_MSG(engaged, "no value to retrieve");
 			#endif
-			return reinterpret_cast<T*>(eastl::addressof(val));
+			return std::launder(reinterpret_cast<T*>(eastl::addressof(val)));
 	    }
 
 	    inline const T* get_value_address() const EASTL_OPTIONAL_NOEXCEPT
@@ -443,7 +446,7 @@ namespace eastl
 			#elif EASTL_ASSERT_ENABLED
 				EASTL_ASSERT_MSG(engaged, "no value to retrieve");
 			#endif
-			return reinterpret_cast<const T*>(eastl::addressof(val));
+			return std::launder(reinterpret_cast<const T*>(eastl::addressof(val)));
 	    }
 
 	    inline value_type& get_value_ref() EASTL_OPTIONAL_NOEXCEPT

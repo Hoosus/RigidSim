@@ -1,26 +1,27 @@
-//
-// Created by Mike on 8/1/2021.
-//
-
-#include "backends/cuda/cuda_error.h"
-#include <backends/cuda/cuda_host_buffer_pool.h>
+#include <luisa/core/clock.h>
+#include "cuda_error.h"
+#include "cuda_host_buffer_pool.h"
 
 namespace luisa::compute::cuda {
 
 CUDAHostBufferPool::CUDAHostBufferPool(size_t size, bool write_combined) noexcept
-    : _first_fit{std::max(next_pow2(size), static_cast<size_t>(4096u)), alignment},
-      _write_combined{write_combined} {
-    auto flags = _write_combined ? CU_MEMHOSTALLOC_WRITECOMBINED : 0;
-    LUISA_CHECK_CUDA(cuMemHostAlloc(
-        reinterpret_cast<void **>(&_memory),
-        _first_fit.size(), flags));
+    : _first_fit{std::max(next_pow2(size), static_cast<size_t>(4096u)), alignment} {
+    auto flags = write_combined ?
+                     CU_MEMHOSTALLOC_DEVICEMAP | CU_MEMHOSTALLOC_WRITECOMBINED :
+                     CU_MEMHOSTALLOC_DEVICEMAP;
+    Clock clk;
+    void *memory = nullptr;
+    LUISA_CHECK_CUDA(cuMemHostAlloc(&memory, _first_fit.size(), flags));
+    _memory = static_cast<std::byte *>(memory);
+    LUISA_VERBOSE("CUDAHostBufferPool (size = {}) initialized in {} ms.",
+                  _first_fit.size(), clk.toc());
 }
 
 CUDAHostBufferPool::~CUDAHostBufferPool() noexcept {
     LUISA_CHECK_CUDA(cuMemFreeHost(reinterpret_cast<void *>(_memory)));
 }
 
-CUDAHostBufferPool::View *CUDAHostBufferPool::allocate(size_t size) noexcept {
+CUDAHostBufferPool::View *CUDAHostBufferPool::allocate(size_t size, bool fallback_if_failed) noexcept {
     auto view = [this, size] {
         std::scoped_lock lock{_mutex};
         auto node = _first_fit.allocate(size);
@@ -32,7 +33,9 @@ CUDAHostBufferPool::View *CUDAHostBufferPool::allocate(size_t size) noexcept {
             "CUDAHostBufferPool. Falling back "
             "to ad-hoc allocation.",
             size);
-        view = View::create(luisa::allocate<std::byte>(size));
+        if (fallback_if_failed) {
+            view = View::create(luisa::allocate_with_allocator<std::byte>(size));
+        }
     }
     return view;
 }
@@ -63,9 +66,9 @@ void CUDAHostBufferPool::View::recycle() noexcept {
     if (is_pooled()) [[likely]] {
         _pool->recycle(node());
     } else {
-        luisa::deallocate(static_cast<std::byte *>(_handle));
+        luisa::deallocate_with_allocator(static_cast<std::byte *>(_handle));
     }
-    host_buffer_recycle_context_pool().recycle(this);
+    host_buffer_recycle_context_pool().destroy(this);
 }
 
 CUDAHostBufferPool::View *CUDAHostBufferPool::View::create(std::byte *handle) noexcept {

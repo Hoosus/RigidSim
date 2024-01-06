@@ -1,135 +1,108 @@
-//
-// Created by Mike on 2021/11/8.
-//
+#include <luisa/core/clock.h>
+#include <luisa/core/binary_io.h>
+#include "cuda_error.h"
+#include "cuda_device.h"
+#include "optix_api.h"
+#include "cuda_builtin_embedded.h"
+#include "cuda_compiler.h"
 
-#include <fstream>
-
-#include <optix.h>
-#include <backends/cuda/cuda_error.h>
-#include <backends/cuda/cuda_codegen.h>
-#include <backends/cuda/cuda_compiler.h>
+#ifndef LUISA_COMPUTE_STANDALONE_NVRTC_DLL
+extern "C" {
+LUISA_NVRTC_StringBuffer luisa_nvrtc_compile(
+    const char *filename, const char *src,
+    const char *const *options, size_t num_options);
+void luisa_nvrtc_free(LUISA_NVRTC_StringBuffer buffer);
+int luisa_nvrtc_version();
+}
+#endif
 
 namespace luisa::compute::cuda {
 
-#include <backends/cuda/cuda_device_math_embedded.inl.h>
-#include <backends/cuda/cuda_device_resource_embedded.inl.h>
+luisa::string CUDACompiler::compile(const luisa::string &src, const luisa::string &src_filename,
+                                    luisa::span<const char *const> options,
+                                    const CUDAShaderMetadata *metadata) const noexcept {
 
-luisa::string CUDACompiler::compile(const Context &ctx, Function function, uint32_t sm) noexcept {
+    Clock clk;
 
-    auto hash = hash64(sm, function.hash());
+#ifndef NDEBUG
+    // in debug mode, we always recompute the hash, so
+    // that we can check the hash if metadata is provided
+    auto hash = compute_hash(src, options);
+    if (metadata) { LUISA_ASSERT(metadata->checksum == hash, "Hash mismatch!"); }
+#else
+    auto hash = metadata ? metadata->checksum : compute_hash(src, options);
+#endif
+
     if (auto ptx = _cache->fetch(hash)) { return *ptx; }
-    static const auto library_hash = hash64(
-        cuda_device_math_source,
-        hash64(cuda_device_resource_source));
 
-    auto ver_major = 0;
-    auto ver_minor = 0;
-    auto nvrtc_version = ver_major * 10000 + ver_minor * 100;
-    LUISA_CHECK_NVRTC(nvrtcVersion(&ver_major, &ver_minor));
-    auto nvrtc_option = luisa::format("-DLC_NVRTC_VERSION={}", nvrtc_version);
-    auto sm_option = fmt::format("-arch=compute_{}", sm);
-    auto rt_option = fmt::format("-DLC_OPTIX_VERSION={}", function.raytracing() ? OPTIX_VERSION : 0);
-    auto const_option = fmt::format("-Dlc_constant={}", nvrtc_version <= 110200 ? "const" : "constexpr");
-    std::array options{
-        sm_option.c_str(),
-        rt_option.c_str(),
-        nvrtc_option.c_str(),
-        const_option.c_str(),
-        "--std=c++17",
-        "--use_fast_math",
-        "-default-device",
-        "-restrict",
-        "-include=device_math.h",
-        "-include=device_resource.h",
-        "-extra-device-vectorization",
-        "-dw",
-        "-w"};
-
-    auto opt_hash = Hash64::default_seed;
-    for (auto o : options) { opt_hash = hash64(o, opt_hash); }
-
-    auto file_name = fmt::format(
-        "func_{:016x}.lib_{:016x}.opt_{:016x}",
-        function.hash(), library_hash, opt_hash);
-    auto &&cache_dir = ctx.cache_directory();
-    auto ptx_file_name = file_name + ".ptx";
-    auto cu_file_name = file_name + ".cu";
-    auto ptx_file_path = cache_dir / ptx_file_name;
-
-
-    static std::mutex ptx_mutex;
-
-    // try disk cache
-    {
-        std::lock_guard lock{ptx_mutex};
-        if (std::ifstream ptx_file{ptx_file_path}; ptx_file.is_open()) {
-            LUISA_INFO("Found compilation cache: '{}'.", ptx_file_name);
-            luisa::string ptx{
-                std::istreambuf_iterator<char>{ptx_file},
-                std::istreambuf_iterator<char>{}};
-            _cache->update(hash, ptx);
-            return ptx;
-        }
-    }
-    LUISA_INFO(
-        "Failed to load compilation cache for kernel {:016X},"
-        " falling back to re-compiling.",
-        function.hash());
-
-    // compile
-    static thread_local Codegen::Scratch scratch;
-    scratch.clear();
-    CUDACodegen{scratch}.emit(function);
-
-    auto source = scratch.view();
-    LUISA_VERBOSE_WITH_LOCATION("Generated CUDA source:\n{}", source);
-
-    // save the source for debugging
-    {
-        static std::mutex mutex;
-        std::lock_guard lock{mutex};
-        std::ofstream cu_file{cache_dir / cu_file_name};
-        cu_file << source;
-    }
-
-    std::array header_names{"device_math.h", "device_resource.h"};
-    std::array header_sources{cuda_device_math_source, cuda_device_resource_source};
-    nvrtcProgram prog;
-    LUISA_CHECK_NVRTC(nvrtcCreateProgram(
-        &prog, source.data(), "my_kernel.cu",
-        header_sources.size(), header_sources.data(), header_names.data()));
-    auto error = nvrtcCompileProgram(prog, options.size(), options.data());
-    size_t log_size;
-    LUISA_CHECK_NVRTC(nvrtcGetProgramLogSize(prog, &log_size));
-    if (log_size > 1u) {
-        luisa::string log;
-        log.resize(log_size - 1);
-        LUISA_CHECK_NVRTC(nvrtcGetProgramLog(prog, log.data()));
-        std::cerr << "Compile log:\n" << log << std::flush;
-    }
-    LUISA_CHECK_NVRTC(error);
-
-    size_t ptx_size;
-    LUISA_CHECK_NVRTC(nvrtcGetPTXSize(prog, &ptx_size));
-    luisa::string ptx;
-    ptx.resize(ptx_size - 1);
-    LUISA_CHECK_NVRTC(nvrtcGetPTX(prog, ptx.data()));
-    LUISA_CHECK_NVRTC(nvrtcDestroyProgram(&prog));
-
-    _cache->update(hash, ptx);
-
-    // save cache
-    {
-        std::lock_guard lock{ptx_mutex};
-        std::ofstream ptx_file{ptx_file_path};
-        ptx_file << ptx;
-    }
+    auto filename = src_filename.empty() ? "my_kernel.cu" : src_filename.c_str();
+    auto is_ray_tracing = std::find(options.begin(), options.end(), "--optix-ir") != options.end();
+    auto output = _compile_func(filename, src.c_str(), options.data(), options.size());
+    auto ptx = luisa::string{output.data, output.size};
+    _free_func(output);
+    LUISA_VERBOSE("CUDACompiler::compile() took {} ms.", clk.toc());
     return ptx;
 }
 
-CUDACompiler &CUDACompiler::instance() noexcept {
-    static CUDACompiler compiler;
-    return compiler;
+size_t CUDACompiler::type_size(const Type *type) noexcept {
+    if (type == nullptr) { return 1u; }
+    if (!type->is_custom()) { return type->size(); }
+    // TODO: support custom types
+    if (type->description() == "LC_IndirectKernelDispatch") {
+        LUISA_ERROR_WITH_LOCATION("Not implemented.");
+    }
+    LUISA_ERROR_WITH_LOCATION("Not implemented.");
+}
+
+CUDACompiler::CUDACompiler(const CUDADevice *device) noexcept
+    : _device{device},
+      _device_library{[] {
+          luisa::string device_library;
+          auto device_half = luisa::string_view{
+              luisa_cuda_builtin_cuda_device_half,
+              sizeof(luisa_cuda_builtin_cuda_device_half)};
+          auto device_math = luisa::string_view{
+              luisa_cuda_builtin_cuda_device_math,
+              sizeof(luisa_cuda_builtin_cuda_device_math)};
+          auto device_resource = luisa::string_view{
+              luisa_cuda_builtin_cuda_device_resource,
+              sizeof(luisa_cuda_builtin_cuda_device_resource)};
+
+          device_library.resize(device_half.size() +
+                                device_math.size() +
+                                device_resource.size());
+          std::memcpy(device_library.data(),
+                      device_half.data(), device_half.size());
+          std::memcpy(device_library.data() + device_half.size(),
+                      device_math.data(), device_math.size());
+          std::memcpy(device_library.data() + device_half.size() + device_math.size(),
+                      device_resource.data(), device_resource.size());
+          return device_library;
+      }()},
+      _cache{Cache::create(max_cache_item_count)} {
+
+#ifdef LUISA_COMPUTE_STANDALONE_NVRTC_DLL
+    _nvrtc_module = DynamicModule::load("lc-cuda-nvrtc");
+    LUISA_ASSERT(_nvrtc_module, "Failed to load CUDA NVRTC module.");
+    _version_func = _nvrtc_module.function<nvrtc_version_func>("luisa_nvrtc_version");
+    _compile_func = _nvrtc_module.function<nvrtc_compile_func>("luisa_nvrtc_compile");
+    _free_func = _nvrtc_module.function<nvrtc_free_func>("luisa_nvrtc_free");
+#else
+    _version_func = &luisa_nvrtc_version;
+    _compile_func = &luisa_nvrtc_compile;
+    _free_func = &luisa_nvrtc_free;
+#endif
+
+    _nvrtc_version = _version_func();
+    LUISA_VERBOSE("CUDA NVRTC version: {}.", _nvrtc_version);
+    LUISA_VERBOSE("CUDA device library size = {} bytes.", _device_library.size());
+}
+
+uint64_t CUDACompiler::compute_hash(const string &src,
+                                    luisa::span<const char *const> options) const noexcept {
+    auto hash = hash_value(src);
+    for (auto o : options) { hash = hash_value(o, hash); }
+    return hash;
 }
 
 }// namespace luisa::compute::cuda

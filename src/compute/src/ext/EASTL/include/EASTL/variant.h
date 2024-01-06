@@ -130,7 +130,7 @@ namespace eastl
 		template<typename T>
 		struct destroy_if_supported<T, false>
 		{
-			static void call(T* pThis) {} // intentionally blank
+			static void call(T*) {} // intentionally blank
 		};
 
 		///////////////////////////////////////////////////////////////////////////
@@ -153,7 +153,7 @@ namespace eastl
 		template<typename T>
 		struct copy_if_supported<T, false>
 		{
-			static void call(T* pThis, T* pOther) {} // intentionally blank
+			static void call(T*, T*) {} // intentionally blank
 		};
 
 		///////////////////////////////////////////////////////////////////////////
@@ -176,7 +176,7 @@ namespace eastl
 		template<typename T>
 		struct move_if_supported<T, false>
 		{
-			static void call(T* pThis, T* pOther) {} // intentionally blank
+			static void call(T*, T*) {} // intentionally blank
 		};
 	} // namespace internal
 
@@ -210,6 +210,8 @@ namespace eastl
 			throw bad_variant_access();
 	#elif EASTL_ASSERT_ENABLED
 		EASTL_ASSERT_MSG(b, "eastl::bad_variant_access assert");
+	#else
+		EA_UNUSED(b);
 	#endif
 	}
 
@@ -393,14 +395,14 @@ namespace eastl
 		T get_as()
 		{
 			static_assert(eastl::is_pointer_v<T>, "T must be a pointer type");
-			return reinterpret_cast<T>(&mBuffer);
+			return std::launder(reinterpret_cast<T>(&mBuffer));
 		}
 
 		template<typename T>
 		const T get_as() const
 		{
 			static_assert(eastl::is_pointer_v<T>, "T must be a pointer type");
-			return reinterpret_cast<const T>(reinterpret_cast<uintptr_t>(&mBuffer));
+			return std::launder(reinterpret_cast<const T>(reinterpret_cast<uintptr_t>(&mBuffer)));
 		}
 
 		void destroy()
@@ -460,14 +462,14 @@ namespace eastl
 		T get_as()
 		{
 			static_assert(eastl::is_pointer_v<T>, "T must be a pointer type");
-			return reinterpret_cast<T>(&mBuffer);
+			return std::launder(reinterpret_cast<T>(&mBuffer));
 		}
 
 		template<typename T>
 		const T get_as() const
 		{
 			static_assert(eastl::is_pointer_v<T>, "T must be a pointer type");
-			return reinterpret_cast<const T>(reinterpret_cast<uintptr_t>(&mBuffer));
+			return std::launder(reinterpret_cast<const T>(reinterpret_cast<uintptr_t>(&mBuffer)));
 		}
 
 		void destroy() {}
@@ -533,7 +535,7 @@ namespace eastl
 	//
 	template <class... Types>
 	struct hash<variant<Types...> >
-		{ size_t operator()(const variant<Types...>& val) const { return static_cast<size_t>(-0x42); } };
+		{ size_t operator()(const variant<Types...>&) const { return static_cast<size_t>(-0x42); } };
 
 
 	///////////////////////////////////////////////////////////////////////////
@@ -671,6 +673,14 @@ namespace eastl
 		variant_storage_t mStorage;
 
 	public:
+		template <typename T>
+		T get_as() noexcept{
+			return mStorage.template get_as<T>();
+		}
+		template <typename T>
+		T get_as() const noexcept{
+			return mStorage.template get_as<T>();
+		}
 		///////////////////////////////////////////////////////////////////////////
 		// 20.7.2.1, constructors
 		//
@@ -826,7 +836,7 @@ namespace eastl
 
 			mStorage.template set_as<T>(eastl::forward<Args>(args)...);
 			mIndex = static_cast<variant_index_t>(I);
-			return *reinterpret_cast<T*>(&mStorage.mBuffer);
+			return *std::launder(reinterpret_cast<T*>(&mStorage.mBuffer));
 		}
 
 		// First, destroys the currently contained value (if any). Then direct-initializes the contained value as if
@@ -853,7 +863,7 @@ namespace eastl
 
 			mStorage.template set_as<T>(il, eastl::forward<Args>(args)...);
 			mIndex = static_cast<variant_index_t>(I);
-			return *reinterpret_cast<T*>(&mStorage.mBuffer);
+			return *std::launder(reinterpret_cast<T*>(&mStorage.mBuffer));
 		}
 
 
@@ -1076,13 +1086,13 @@ namespace eastl
 
 
 	template <size_t N, typename Variant, typename... Variants, eastl::enable_if_t<N == 0, int> = 0>
-	static EA_CONSTEXPR decltype(auto) get_variant_n(Variant&& variant, Variants&&... variants)
+	static EA_CONSTEXPR decltype(auto) get_variant_n(Variant&& variant, Variants&&...)
 	{
 		return eastl::forward<Variant>(variant);
 	}
 
 	template <size_t N, typename Variant, typename... Variants, eastl::enable_if_t<N != 0, int> = 0>
-	static EA_CONSTEXPR decltype(auto) get_variant_n(Variant&& variant, Variants&&... variants)
+	static EA_CONSTEXPR decltype(auto) get_variant_n(Variant&&, Variants&&... variants)
 	{
 		return get_variant_n<N - 1>(eastl::forward<Variants>(variants)...);
 	}
@@ -1348,7 +1358,7 @@ namespace eastl
 	//     variant<int, long, string> v = "Hello, Variant";
 	//     visit(MyVisitor{}, v);  // calls MyVisitor::operator()(string) {}
 	//
-
+	EA_DISABLE_VC_WARNING(4100) // warning C4100: 't': unreferenced formal parameter
 	template <typename... Variants>
 	static EA_CPP14_CONSTEXPR void visit_throw_bad_variant_access(Variants&&... variants)
 	{
@@ -1374,7 +1384,7 @@ namespace eastl
 		static_assert(conjunction_v<is_same<variant_type, decay_t<Variants>>...>,
 					  "`visit` all variants passed to eastl::visit() must have the same type");
 	}
-
+	EA_RESTORE_VC_WARNING()
 
 	// visit
 	//
