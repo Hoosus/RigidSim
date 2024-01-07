@@ -1,5 +1,6 @@
 #include <vector>
 #include "luisa/luisa-compute.h"
+#include "render/material.h"
 
 using luisa::float3;
 using luisa::compute::Triangle;
@@ -19,11 +20,18 @@ class RMesh {
   float4x4 _transform;
   std::vector<float3> _verts;
   std::vector<Triangle> _faces;
+  RMaterial _mat;
+
+ public:
+  void SetMaterial(const RMaterial &mat) { _mat = mat; }
+  void SetMaterialColor(float3 color) { _mat.color = color; }
+  void SetMaterialType(MAT type) { _mat.mtype = static_cast<uint>(type); }
 
  public:
   [[nodiscard]] auto &verts() noexcept { return _verts; }
   [[nodiscard]] auto &faces() noexcept { return _faces; }
   [[nodiscard]] auto &transform() noexcept { return _transform; }
+  [[nodiscard]] auto &material() noexcept { return _mat; }
 };
 
 

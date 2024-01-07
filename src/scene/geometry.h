@@ -39,7 +39,7 @@ class Geometry {
   std::vector<RMesh> _shapes;
 
  public:
-  BindlessArray heapf, heapv;
+  BindlessArray heapf, heapv, heapm;
   luisa::vector<Buffer<Triangle>> triangle_buffers;
   luisa::vector<Buffer<float3>> vertex_buffers;
 
