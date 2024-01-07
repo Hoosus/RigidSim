@@ -1,5 +1,6 @@
 #include "scene/shape.h"
 #include <luisa/luisa-compute.h>
+#include <vector>
 
 using namespace luisa::compute;
 
@@ -22,15 +23,25 @@ namespace rigid_sim {
 
 class Geometry {
  public:
-  Geometry(Device &device);
-  ~Geometry();
+  Geometry(Device &device, Stream &stream);
+  Geometry(Device &device, Stream &stream, std::vector<RMesh> shapes);
+  ~Geometry() = default;
 
  public:
-  [[nodiscard]] auto intersect(Stream &stream, const Var<Ray> &ray);
+  void AddMesh(const RMesh &mesh) { _shapes.push_back(mesh); }
+  void Build();
+  [[nodiscard]] Var<TriangleHit> intersect(const Var<Ray> &ray);
   
  private:
-  Device &_device;
   Accel _accel;
+  Device &_device;
+  Stream &_stream;
+  std::vector<RMesh> _shapes;
+
+ public:
+  BindlessArray heapf, heapv;
+  luisa::vector<Buffer<Triangle>> triangle_buffers;
+  luisa::vector<Buffer<float3>> vertex_buffers;
 
  public:
   [[nodiscard]] auto &device() noexcept { return _device; }
