@@ -17,9 +17,10 @@ void Geometry::Build() {
   luisa::vector<float4x4> transforms;
   triangle_buffers.clear();
   vertex_buffers.clear();
+  material_buffers.clear();
   luisa::vector<RMaterial> materials;
   materials.resize(_shapes.size());
-  Buffer<RMaterial> material_buffer = _device.create_buffer<RMaterial>(_shapes.size());
+  Buffer<RMaterial> &material_buffer = material_buffers.emplace_back(_device.create_buffer<RMaterial>(_shapes.size()));
 
   for (auto shape: _shapes) {
     uint index = static_cast<uint>(meshes.size());
@@ -41,8 +42,8 @@ void Geometry::Build() {
     transforms.emplace_back(shape.transform());
     materials[index] = shape.material();
   }
-  _stream << material_buffer.copy_from(materials.data());
   heapm.emplace_on_update(0, material_buffer);
+  _stream << material_buffer.copy_from(materials.data());
 
   _accel = _device.create_accel({});
   for (int i = 0; i < meshes.size(); ++i) {

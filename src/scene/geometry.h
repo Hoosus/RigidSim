@@ -42,6 +42,7 @@ class Geometry {
   BindlessArray heapf, heapv, heapm;
   luisa::vector<Buffer<Triangle>> triangle_buffers;
   luisa::vector<Buffer<float3>> vertex_buffers;
+  luisa::vector<Buffer<RMaterial>> material_buffers;
 
  public:
   [[nodiscard]] auto &device() noexcept { return _device; }

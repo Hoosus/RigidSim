@@ -1,10 +1,11 @@
 .PHONY: clean
 
-CXX = clang++
+CXX ?= clang++
 CXXFLAGS ?= -g -O1
+EXTRA_CXXFLAGS ?= -std=c++03 -fsanitize=address
 
 tester: tester.cc ../tiny_obj_loader.h
-	$(CXX) $(CXXFLAGS) -std=c++11 -fsanitize=address -o tester tester.cc
+	$(CXX) $(CXXFLAGS) $(EXTRA_CXXFLAGS) -o tester tester.cc
 
 all: tester
 

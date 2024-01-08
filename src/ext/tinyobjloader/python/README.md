@@ -3,6 +3,18 @@
 `tinyobjloader` is a python wrapper for C++ wavefront .obj loader.
 `tinyobjloader` is rather fast and feature rich than other pure python version of .obj loader.
 
+## Requirements
+
+* python 3.6+
+
+## Install
+
+You can install `tinyobjloader` with pip.
+
+```
+$ pip install tinyobjloader
+```
+
 ## Quick tutorial
 
 ```py
@@ -52,10 +64,24 @@ Please take a look at `python/sample.py` file in tinyobjloader git repo.
 
 https://github.com/syoyo/tinyobjloader/blob/master/python/sample.py
 
+## How to build
+
+Using `cibuildwheel` is a recommended way to build a python module.
+See $tinyobjloader/azure-pipelines.yml for details.
+
+### Developer build
+
+Assume pip is installed.
+
+```
+$ git clone https://github.com/tinyobjloader/tinyobjloader
+$ cd tinyobjloader
+$ python -m pip install .
+```
+
 ## License
 
-MIT license.
+MIT(tinyobjloader) and ISC(mapbox earcut) license.
 
 ## TODO
  * [ ] Writer saver
-

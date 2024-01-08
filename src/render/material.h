@@ -14,19 +14,20 @@ enum MAT {
   LIGHT
 };
 
-struct RMaterial {
-  float3 color{make_float3(1.f)};
+struct alignas(16) RMaterial {
+  std::array<float, 3> color{{1.f, 1.f, 1.f}};
   uint mtype{DIFFUSE};
 };
 
+static_assert(sizeof(RMaterial) == 16u, "RMaterial size mismatch");
 
 
 } // end namespace rigid_sim
 
 
 LUISA_STRUCT(rigid_sim::RMaterial, color, mtype) {
-    [[nodiscard]] Float3 c() const noexcept {
-        return make_float3(color);
+    [[nodiscard]] auto c() const noexcept {
+        return luisa::compute::def<luisa::float3>(color);
     }
     [[nodiscard]] auto is_diffuse() const noexcept { return mtype == uint(rigid_sim::DIFFUSE); }
     [[nodiscard]] auto is_specular() const noexcept { return mtype == uint(rigid_sim::SPECULAR); }

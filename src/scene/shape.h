@@ -1,6 +1,8 @@
 #include <vector>
-#include "luisa/luisa-compute.h"
-#include "render/material.h"
+#include <luisa/luisa-compute.h>
+#include <render/material.h>
+#include <ext/glm/glm/glm.hpp>
+#include <ext/glm/glm/gtc/quaternion.hpp>
 
 using luisa::float3;
 using luisa::compute::Triangle;
@@ -13,6 +15,8 @@ class RMesh {
  public:
   RMesh(std::vector<float3> verts, std::vector<Triangle> faces) : _verts(verts), _faces(faces) {
     _transform = make_float4x4(1.f);
+    is_fixed = false;
+    ComputeCentroid();
   }
   ~RMesh() = default;
 
@@ -23,9 +27,22 @@ class RMesh {
   RMaterial _mat;
 
  public:
-  void SetMaterial(const RMaterial &mat) { _mat = mat; }
-  void SetMaterialColor(float3 color) { _mat.color = color; }
-  void SetMaterialType(MAT type) { _mat.mtype = static_cast<uint>(type); }
+  bool is_fixed;
+
+  float M;
+  glm::vec3 centroid;
+  glm::quat R;
+  glm::mat3 I;
+  glm::vec3 v;
+  glm::vec3 omega;
+
+ public:
+  inline void SetMaterial(const RMaterial &mat) { _mat = mat; }
+  inline void SetMaterialColor(std::array<float, 3> color) { _mat.color = color; }
+  inline void SetMaterialType(MAT type) { _mat.mtype = static_cast<uint>(type); }
+  inline void SetFixed(bool f = true) { is_fixed = f; }
+
+  void ComputeCentroid();
 
  public:
   [[nodiscard]] auto &verts() noexcept { return _verts; }

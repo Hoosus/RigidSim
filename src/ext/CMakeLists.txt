@@ -32,3 +32,7 @@ target_link_libraries(luisa-shader-toy-ext INTERFACE imgui)
 # tinyobjloader
 add_subdirectory(tinyobjloader)
 target_link_libraries(luisa-shader-toy-ext INTERFACE tinyobjloader)
+
+# glm
+add_subdirectory(glm)
+target_link_libraries(luisa-shader-toy-ext INTERFACE glm)
