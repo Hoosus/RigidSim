@@ -19,7 +19,7 @@ static void with_panel(const char *name, F &&f) {
     ImGui::End();
 }
 
-void ShaderToy::run(const MainShader &main_shader) noexcept {
+void ShaderToy::run(rigid_sim::Scene *scene, const MainShader &main_shader) noexcept {
     auto shader = _device->compile(Kernel2D{[&](ImageFloat image, Float time, Float4 cursor) noexcept {
         using namespace compute;
         auto xy = dispatch_id().xy();
@@ -29,9 +29,9 @@ void ShaderToy::run(const MainShader &main_shader) noexcept {
         image.write(xy, make_float4(col, 1.0f));
     }});
     if (_dump_file.empty()) {
-        _run_display(shader);
+        _run_display(scene, shader);
     } else {
-        _run_dump(shader);
+        _run_dump(scene, shader);
     }
 }
 
@@ -86,8 +86,9 @@ ShaderToy::ShaderToy(int argc, const char *const *argv) noexcept
     _stream = _device->create_stream();
 }
 
-void ShaderToy::_run_display(const compute::Shader2D<Image<float>, float, float4> &shader) noexcept {
+void ShaderToy::_run_display(rigid_sim::Scene *scene, const compute::Shader2D<Image<float>, float, float4> &shader) noexcept {
 
+    assert(false);
     auto device_image = _device->create_image<float>(PixelStorage::BYTE4, _size);
     auto event = _device->create_event();
     Window window{_title, _size};
@@ -148,7 +149,7 @@ void ShaderToy::_run_display(const compute::Shader2D<Image<float>, float, float4
     });
 }
 
-void ShaderToy::_run_dump(const compute::Shader2D<Image<float>, float, float4> &shader) noexcept {
+void ShaderToy::_run_dump(rigid_sim::Scene *scene, const compute::Shader2D<Image<float>, float, float4> &shader) noexcept {
 #if LUISA_SHADERTOY_HAS_OPENCV
     auto device_image = _device->create_image<float>(PixelStorage::BYTE4, _size);
     cv::Size size{static_cast<int>(_size.x), static_cast<int>(_size.y)};
@@ -165,6 +166,7 @@ void ShaderToy::_run_dump(const compute::Shader2D<Image<float>, float, float4> &
         LUISA_INFO("Frame {} / {}", i + 1u, _dump_frames);
         cv::cvtColor(frame, cvt_frame, cv::COLOR_RGBA2BGR);
         video << cvt_frame;
+        scene->step(_step);
     }
 #else
     LUISA_WARNING("OpenCV is not available. Dumping is disabled.");

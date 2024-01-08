@@ -107,6 +107,7 @@ int main(int argc, char *argv[]) {
 
   std::string envfile = "../assets/test1.obj";
   rigid_sim::RMesh env = ReadEnvObj(envfile);
+  env.SetFixed(true);
 
   std::string bunnyfile = "../assets/bunny_200.obj";
   rigid_sim::RMesh bunny  = ReadObj(bunnyfile, 5);
@@ -119,6 +120,7 @@ int main(int argc, char *argv[]) {
   uint2 size = toy.size();
   scene.set_camera(Camera(120, make_float2(size.x, size.y)));
   scene.set_camera_offset(make_float3(0.0, 1.0, -4.0));
+  scene.set_gravity(glm::vec3(0.0f, -1.0f, 0.0f));
 
   env.transform() = make_float4x4(1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, -1.f, 0.f, 1.f);
   scene.AddMesh(env);
@@ -138,7 +140,7 @@ int main(int argc, char *argv[]) {
                (1.0f / static_cast<float>(0x01000000u));
   };
 
-  toy.run([&](Float2 fragCoord, Float2 iResolution, Float time, Float4 cursor) noexcept {
+  toy.run(&scene, [&](Float2 fragCoord, Float2 iResolution, Float time, Float4 cursor) noexcept {
     Float3 res = make_float3(0.f);
     UInt state = tea(tea(UInt(fragCoord.x), UInt(fragCoord.y)), UInt(time));
     Float rx = lcg(state);

@@ -8,6 +8,7 @@
 #include <gui/framerate.h>
 #include <gui/gl_texture.h>
 #include <gui/window.h>
+#include <scene/scene.h>
 
 namespace luisa::gui {
 
@@ -46,12 +47,12 @@ private:
     double _dump_fps{24.};
 
 private:
-    void _run_display(const compute::Shader2D<Image<float>, float, float4> &shader) noexcept;
-    void _run_dump(const compute::Shader2D<Image<float>, float, float4> &shader) noexcept;
+    void _run_display(rigid_sim::Scene *scene, const compute::Shader2D<Image<float>, float, float4> &shader) noexcept;
+    void _run_dump(rigid_sim::Scene *scene, const compute::Shader2D<Image<float>, float, float4> &shader) noexcept;
 
 public:
     ShaderToy(int argc, const char *const *argv) noexcept;
-    void run(const MainShader &shader) noexcept;
+    void run(rigid_sim::Scene *scene, const MainShader &shader) noexcept;
     [[nodiscard]] auto &device() noexcept { return *_device; }
     [[nodiscard]] auto &stream() noexcept { return _stream; }
     [[nodiscard]] auto size() const noexcept { return _size; }

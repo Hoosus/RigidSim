@@ -1,3 +1,5 @@
+#pragma once 
+
 #include "scene/shape.h"
 #include <luisa/luisa-compute.h>
 #include <vector>

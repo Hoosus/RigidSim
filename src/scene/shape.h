@@ -1,3 +1,5 @@
+#pragma once 
+
 #include <vector>
 #include <luisa/luisa-compute.h>
 #include <render/material.h>
@@ -17,6 +19,10 @@ class RMesh {
     _transform = make_float4x4(1.f);
     is_fixed = false;
     ComputeCentroid();
+    a = glm::vec3(0);
+    v = glm::vec3(0);
+    omega = glm::vec3(0);
+    R = glm::quat{};
   }
   ~RMesh() = default;
 
@@ -33,7 +39,7 @@ class RMesh {
   glm::vec3 centroid;
   glm::quat R;
   glm::mat3 I;
-  glm::vec3 v;
+  glm::vec3 v, a;
   glm::vec3 omega;
 
  public:
