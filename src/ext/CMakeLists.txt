@@ -36,3 +36,7 @@ target_link_libraries(luisa-shader-toy-ext INTERFACE tinyobjloader)
 # glm
 add_subdirectory(glm)
 target_link_libraries(luisa-shader-toy-ext INTERFACE glm)
+
+# vcglib
+add_subdirectory(vcglib)
+target_link_libraries(luisa-shader-toy-ext INTERFACE vcglib)

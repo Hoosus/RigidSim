@@ -20,5 +20,5 @@ cmake -DCMAKE_USE_OPENSSL=ON .. -D OptiX_DIR=/home/xuejun/NVIDIA-OptiX-SDK-7.6.0
 ## Run
 
 ```
-./bin/app -b cuda -s 1600x1200 -t 1 -n 10 --fps 1 --dump "../1.mp4" 
+./bin/app -b cuda -s 1600x1200 -t 0.1 -n 10 --fps 1 --dump "../1.mp4" 
 ```

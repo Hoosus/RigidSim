@@ -3,8 +3,8 @@
 #include <vector>
 #include <luisa/luisa-compute.h>
 #include <render/material.h>
-#include <ext/glm/glm/glm.hpp>
-#include <ext/glm/glm/gtc/quaternion.hpp>
+#include <glm/glm.hpp>
+#include <glm/gtx/quaternion.hpp>
 
 using luisa::float3;
 using luisa::compute::Triangle;
@@ -15,19 +15,28 @@ namespace rigid_sim {
 
 class RMesh {
  public:
-  RMesh(std::vector<float3> verts, std::vector<Triangle> faces) : _verts(verts), _faces(faces) {
-    _transform = make_float4x4(1.f);
-    is_fixed = false;
-    ComputeCentroid();
-    a = glm::vec3(0);
+  RMesh(std::vector<float3> verts, std::vector<Triangle> faces, bool fixed=false) : _verts(verts), _faces(faces) {
+    is_fixed = fixed;
+    if (!is_fixed) {
+      ComputeCentroid();
+      for (auto &vert : _verts) {
+        vert += make_float3(-centroid.x, -centroid.y, -centroid.z);
+      }
+    } else {
+      centroid = glm::vec3(0);
+      inv_I = glm::identity<glm::mat3>();
+      M = 1.f;
+    }
+    x = glm::vec3(0);
     v = glm::vec3(0);
+    f = glm::vec3(0);
+    tau = glm::vec3(0);
     omega = glm::vec3(0);
-    R = glm::quat{};
+    R = glm::identity<glm::quat>();
   }
   ~RMesh() = default;
 
  private:
-  float4x4 _transform;
   std::vector<float3> _verts;
   std::vector<Triangle> _faces;
   RMaterial _mat;
@@ -38,8 +47,8 @@ class RMesh {
   float M;
   glm::vec3 centroid;
   glm::quat R;
-  glm::mat3 I;
-  glm::vec3 v, a;
+  glm::mat3 inv_I;
+  glm::vec3 x, v, f, tau;
   glm::vec3 omega;
 
  public:
@@ -53,7 +62,6 @@ class RMesh {
  public:
   [[nodiscard]] auto &verts() noexcept { return _verts; }
   [[nodiscard]] auto &faces() noexcept { return _faces; }
-  [[nodiscard]] auto &transform() noexcept { return _transform; }
   [[nodiscard]] auto &material() noexcept { return _mat; }
 };
 

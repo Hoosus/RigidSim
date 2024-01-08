@@ -27,7 +27,7 @@ class Geometry {
  public:
   Geometry(Device &device, Stream &stream);
   Geometry(Device &device, Stream &stream, std::vector<RMesh> shapes);
-  ~Geometry() = default;
+  ~Geometry() {};
 
  public:
   void AddMesh(const RMesh &mesh) { _shapes.push_back(mesh); }
@@ -48,6 +48,7 @@ class Geometry {
 
  public:
   [[nodiscard]] auto &device() noexcept { return _device; }
+  [[nodiscard]] auto &meshes() noexcept { return _shapes; }
 };
 
 
