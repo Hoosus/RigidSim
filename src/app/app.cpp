@@ -42,6 +42,7 @@ rigid_sim::RMesh ReadEnvObj(std::string inputfile) {
                            attrib.vertices[3 * i + 2]);
   }
   std::vector<Triangle> faces; // three in a row is a face, verts index starting from 0
+  std::vector<vec3> normals;
   for (int i = 0; i < shapes.size(); ++i) {
     int num_faces = shapes[i].mesh.num_face_vertices.size();
     for (int j = 0; j < num_faces; ++j) {
@@ -49,9 +50,13 @@ rigid_sim::RMesh ReadEnvObj(std::string inputfile) {
       faces.push_back(Triangle(shapes[i].mesh.indices[3 * j].vertex_index, 
                                shapes[i].mesh.indices[3 * j + 1].vertex_index, 
                                shapes[i].mesh.indices[3 * j + 2].vertex_index));
+      assert (shapes[i].mesh.indices[3 * j].normal_index == shapes[i].mesh.indices[3 * j + 1].normal_index);
+      assert (shapes[i].mesh.indices[3 * j].normal_index == shapes[i].mesh.indices[3 * j + 2].normal_index);
+      auto index = 3 * shapes[i].mesh.indices[3 * j].normal_index;                      
+      normals.push_back(glm::vec3(attrib.normals[index], attrib.normals[index + 1], attrib.normals[index + 2]));
     }
   }
-  rigid_sim::RMesh mesh{verts, faces, true};
+  rigid_sim::RMesh mesh{verts, faces, normals};
   mesh.SetMaterialColor({1.f, 1.f, 1.f});
   mesh.SetMaterialType(rigid_sim::DIFFUSE);
   return mesh;
@@ -107,33 +112,41 @@ int main(int argc, char *argv[]) {
 
   gui::ShaderToy toy{argc, argv};
 
-  std::string envfile = "../assets/test1.obj";
+  std::string envfile = "../assets/cornell.obj";
   rigid_sim::RMesh env = ReadEnvObj(envfile);
-  env.SetFixed(true);
 
   std::string bunnyfile = "../assets/bunny_200.obj";
-  rigid_sim::RMesh bunny  = ReadObj(bunnyfile, 5);
   std::string spherefile = "../assets/sphere.obj";
+  std::string tallboxfile = "../assets/cornell_tallbox.obj";
+  std::string shortboxfile = "../assets/cornell_shortbox.obj";
+
+  rigid_sim::RMesh bunny  = ReadObj(bunnyfile, 1);
   rigid_sim::RMesh sphere  = ReadObj(spherefile);
+  rigid_sim::RMesh tallbox  = ReadObj(tallboxfile);
+  tallbox.tag |= rigid_sim::RMESH_TAG_BOX;
+  rigid_sim::RMesh shortbox  = ReadObj(shortboxfile);
+  shortbox.tag |= rigid_sim::RMESH_TAG_BOX;
 
   auto& device = toy.device();
   auto& stream = toy.stream();
   Scene scene{device, stream};
   uint2 size = toy.size();
-  scene.set_camera(Camera(120, make_float2(size.x, size.y)));
-  scene.set_camera_offset(make_float3(0.0, 1.0, -4.0));
+  // scene.set_camera(Camera(120, make_float2(size.x, size.y)));
+  // scene.set_camera_offset(make_float3(0.0, 1.0, -4.0));
+  // scene.set_gravity(glm::vec3(0.0f, -1.0f, 0.0f));
+  scene.set_camera(Camera(27, make_float2(size.x, size.y)));
+  scene.set_camera_offset(make_float3(0.0, 1.0, -6.8));
   scene.set_gravity(glm::vec3(0.0f, -1.0f, 0.0f));
 
-  // env.transform() = make_float4x4(1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, -1.f, 0.f, 1.f);
-  env.x = vec3(0.f, -1.f, 0.f);
+  bunny.x = vec3(0.f, 1.5f, 0.0f);
+  scene.AddMesh(bunny);
+  // env.x = vec3(0.f, -1.f, 0.f);
   scene.AddMesh(env);
-  // bunny.transform() = make_float4x4(1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, -2.f, 0.f, 0.f, 1.f);
-  bunny.x = vec3(-2.f, 0.f, 0.f);
-  scene.AddMesh(bunny);
-  bunny.x = vec3(2.f, 0.f, 0.f);
-  // bunny.transform() = make_float4x4(1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 2.f, 0.f, 0.f, 1.f);
-  // bunny.SetMaterialType(MAT::GLASS);
-  scene.AddMesh(bunny);
+  tallbox.x = vec3(0.f, 0.1f, 0.0f);
+  scene.AddMesh(tallbox);
+  shortbox.x = vec3(0.f, 0.2f, 0.0f);
+  scene.AddMesh(shortbox);
+
 
   toy.run(scene);
   // scene.geometry().Build();

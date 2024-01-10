@@ -13,6 +13,8 @@ using luisa::float4x4;
 
 namespace rigid_sim {
 
+static const uint RMESH_TAG_BOX = 1u;
+
 class RMesh {
  public:
   RMesh(std::vector<float3> verts, std::vector<Triangle> faces, bool fixed=false) : _verts(verts), _faces(faces) {
@@ -33,12 +35,16 @@ class RMesh {
     tau = glm::vec3(0);
     omega = glm::vec3(0);
     R = glm::identity<glm::quat>();
+    tag = 0u;
   }
+  RMesh(std::vector<float3> verts, std::vector<Triangle> faces, std::vector<glm::vec3> normals)
+      : RMesh(verts, faces, true) { _normals = normals; }
   ~RMesh() = default;
 
  private:
   std::vector<float3> _verts;
   std::vector<Triangle> _faces;
+  std::vector<glm::vec3> _normals; // only available with fixed env
   RMaterial _mat;
 
  public:
@@ -50,6 +56,10 @@ class RMesh {
   glm::mat3 inv_I;
   glm::vec3 x, v, f, tau;
   glm::vec3 omega;
+  glm::vec3 temp; // temporary storage
+  uint count; // tmeporary storage
+
+  uint tag;
 
  public:
   inline void SetMaterial(const RMaterial &mat) { _mat = mat; }
@@ -62,6 +72,7 @@ class RMesh {
  public:
   [[nodiscard]] auto &verts() noexcept { return _verts; }
   [[nodiscard]] auto &faces() noexcept { return _faces; }
+  [[nodiscard]] auto &normals() noexcept { return _normals; }
   [[nodiscard]] auto &material() noexcept { return _mat; }
 };
 
