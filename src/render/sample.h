@@ -42,9 +42,16 @@ Callable my_reflect = [](Float3 v, Float3 n) {
 
 Callable refract = [](Float3 v, Float3 n, Float eta) {
   Float cos_wi = dot(v, n);
-  Float3 out_perp = eta * (-v + cos_wi * n);
-  Float3 out_para = -sqrt(abs(1.0f - length_squared(out_perp))) * n;
-  return normalize(out_para + out_perp);
+  // total internal reflection
+  Float3 out;
+  $if (sqrt(1.f - cos_wi * cos_wi) * eta > 1.0f) {
+    out = dot(v, n) * 2.f * n - v;
+  } $else {
+    Float3 out_perp = eta * (-v + cos_wi * n);
+    Float3 out_para = -sqrt(abs(1.0f - length_squared(out_perp))) * n;
+    out = normalize(out_para + out_perp);
+  };
+  return out;
 };
 
 

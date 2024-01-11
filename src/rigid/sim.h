@@ -7,6 +7,7 @@
 #include <scene/scene.h>
 #include <scene/shape.h>
 #include <vector>
+#include <render/material.h>
 
 using namespace glm;
 
@@ -101,8 +102,8 @@ void Scene::_simulation(vec3 gravity, float timestep) {
     for (int j = 0; j < N; ++j) {
       if (i == j) continue;
       if (AABB_not_intersect(AABBs[i], AABBs[j])) continue;
-
-      if (meshes[j].is_fixed){//} || (j > i)) {
+      if (meshes[j].material().mtype == rigid_sim::LIGHT) continue;
+      if (meshes[j].is_fixed || (j > i)) {
 
         auto &verts1 = meshes[i].verts();
         auto &faces1 = meshes[i].faces();
@@ -113,6 +114,9 @@ void Scene::_simulation(vec3 gravity, float timestep) {
         for (int k = 0; k < verts1.size(); ++k) {
           vec3 u = gv(verts1[k]);
           vec3 X = mat_rotate[i] * u + vec_trans[i];
+          printf("[%.3lf %.3lf %.3lf]\n", mat_rotate[i][0][0], mat_rotate[i][1][0], mat_rotate[i][2][0]);
+          printf("[%.3lf %.3lf %.3lf]\n", mat_rotate[i][0][1], mat_rotate[i][1][1], mat_rotate[i][2][1]);
+          printf("[%.3lf %.3lf %.3lf]\n", mat_rotate[i][0][2], mat_rotate[i][1][2], mat_rotate[i][2][2]);
           vec3 cur_f = vec3(0);
           vec3 cur_tau = vec3(0);
           vec3 cur_tau2 = vec3(0);
@@ -123,13 +127,15 @@ void Scene::_simulation(vec3 gravity, float timestep) {
             vec3 v2 = mat_rotate[j] * gv(verts2[faces2[l].i1]) + vec_trans[j];
             vec3 v3 = mat_rotate[j] * gv(verts2[faces2[l].i2]) + vec_trans[j];
             vec3 nv;
-            if (meshes[j].is_fixed) {
+            if (normals2.size() > 0) {
               nv = normalize(normals2[l]);
             } else {
+              printf("compute normal!\n");
               nv = normalize(cross(v2 - v1, v3 - v1));
             }
             float d_u1 = dot(X - v1, nv);
             if (d_u1 >= 0.0) continue;   
+            if (!meshes[j].is_fixed && d_u1 < -0.1) continue;
             vec3 xp = X - v1 - d_u1 * nv;
             vec3 e2 = v2 - v1;
             vec3 e3 = v3 - v1;
@@ -144,17 +150,20 @@ void Scene::_simulation(vec3 gravity, float timestep) {
             // printf("alpha beta %.2lf %.2lf\n", alpha, beta);
             if (alpha < 0 || beta < 0 || alpha + beta > 1) continue;
 
-            vec3 V = meshes[i].v + cross(meshes[i].omega, mat_rotate[i] * u);
-            // printf("verts: %5.lf %.5lf %.5lf inside mesh! %d normal = [%.5lf %.5lf %.5lf] distance = %.5lf V=[%.3lf %.3lf %.3lf]\n", X.x, X.y, X.z, l, nv.x, nv.y, nv.z, d_u1, V.x, V.y, V.z);
+            vec3 V = meshes[i].v + cross(meshes[i].omega, mat_rotate[i] * u) - meshes[j].v;
+            printf("mesh %d verts %d: u[%.5lf %.5lf %.5lf] centroid[%.5lf %.5lf %.5lf] trans[%.5lf %.5lf %.5lf] X[%.5lf %.5lf %.5lf] inside mesh %d face %d normal = [%.5lf %.5lf %.5lf] distance = %.5lf relV=[%.3lf %.3lf %.3lf]\n", 
+                    i, k, u.x, u.y, u.z, meshes[i].centroid.x, meshes[i].centroid.y, meshes[i].centroid.z, meshes[i].x.x, meshes[i].x.y, meshes[i].x.z, X.x, X.y, X.z, j, l, nv.x, nv.y, nv.z, d_u1, V.x, V.y, V.z);
+            printf("v1 is [%.5lf %.5lf %.5lf], v2 is [%.5lf %.5lf %.5lf], v3 is [%.5lf %.5lf %.5lf]\n", v1.x, v1.y, v1.z, v2.x, v2.y, v2.z, v3.x, v3.y, v3.z);
 
             if (dot(V, nv) < 0) { // velocity into the environment
               vec3 vN = dot(V, nv) * nv;
               vec3 vT = V - vN;
               float a = std::max(0.f, 1.f - muT * (1 + muN) * length(vN) / length(vT));
               vec3 vN_new = -muN * vN;
+              if (meshes[i].tag == 0) vN_new *= 0.5;
               vec3 vT_new = a * vT;
               vec3 v_new = vN_new + vT_new;
-              // printf("vnew=[%.2lf %.2lf %.2lf]\n", v_new.x, v_new.y, v_new.z);
+              printf("vnew=[%.2lf %.2lf %.2lf]\n", v_new.x, v_new.y, v_new.z);
               vec3 Rr = mat_rotate[i] * u;
               mat3 Rr_op = mat_operator(Rr);
               mat3 K = mat3{1.f / meshes[i].M} - Rr_op * meshes[i].inv_I * Rr_op;
@@ -191,6 +200,7 @@ void Scene::_simulation(vec3 gravity, float timestep) {
     // printf("pre v = %.2lf %.2lf %.2lf\n", mesh.v.x, mesh.v.y, mesh.v.z);
     mesh.v += 1.f / mesh.M * mesh.f; // actually impulse, not force
     // printf("after v = %.2lf %.2lf %.2lf\n", mesh.v.x, mesh.v.y, mesh.v.z);
+    printf("find temp %.3lf %.3lf %.3lf\n", mesh.temp.x, mesh.temp.y, mesh.temp.z);
     mesh.omega += mesh.inv_I * mesh.tau;
     mesh.x += mesh.temp;
     mesh.f = vec3(0);

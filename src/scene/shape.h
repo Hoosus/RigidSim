@@ -37,8 +37,8 @@ class RMesh {
     R = glm::identity<glm::quat>();
     tag = 0u;
   }
-  RMesh(std::vector<float3> verts, std::vector<Triangle> faces, std::vector<glm::vec3> normals)
-      : RMesh(verts, faces, true) { _normals = normals; }
+  RMesh(std::vector<float3> verts, std::vector<Triangle> faces, std::vector<glm::vec3> normals, bool fixed=false)
+      : RMesh(verts, faces, fixed) { _normals = normals; }
   ~RMesh() = default;
 
  private:

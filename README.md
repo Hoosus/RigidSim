@@ -8,17 +8,20 @@ Clone the repo
 git clone --recursive git@github.com:Hoosus/RigidSim.git
 ```
 
-~~Download Optix 7.6, and move all the header files in place.~~
-~~See `src/compute/src/backends/cuda/optix/README.md`~~
+Then build the object
 
 ```
 mkdir build
 cd build
-cmake -DCMAKE_USE_OPENSSL=ON .. -D OptiX_DIR=/home/xuejun/NVIDIA-OptiX-SDK-7.6.0-linux64-x86_64 -D NVTT_DIR=/home/xuejun/nvtt
+cmake ..
 ```
+
+You may need to install dependencies for LuisaCompute (including NVTT from NVIDIA). Just follow the instructions suggested by CMAKE.
 
 ## Run
 
 ```
-./bin/app -b cuda -s 1600x1200 -t 0.1 -n 10 --fps 1 --dump "../1.mp4" 
+./bin/app -b cuda -s 1600x1600 -t 0.05 -n 180 --fps 60 --dump "../1.mp4"
 ```
+
+`-b` adjusts the backend, `-s` determines the resolution, `-t` adjusts the timestep, `-n` decides the total number of frames to be rendered.

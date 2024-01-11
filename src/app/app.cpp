@@ -3,6 +3,7 @@
 #include <scene/scene.h>
 #include <render/sample.h>
 #include <glm/glm.hpp>
+#include <render/light.h>
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
@@ -56,14 +57,14 @@ rigid_sim::RMesh ReadEnvObj(std::string inputfile) {
       normals.push_back(glm::vec3(attrib.normals[index], attrib.normals[index + 1], attrib.normals[index + 2]));
     }
   }
-  rigid_sim::RMesh mesh{verts, faces, normals};
+  rigid_sim::RMesh mesh{verts, faces, normals, true};
   mesh.SetMaterialColor({1.f, 1.f, 1.f});
   mesh.SetMaterialType(rigid_sim::DIFFUSE);
   return mesh;
 }
 
 
-rigid_sim::RMesh ReadObj(std::string inputfile, float zoom=1.0) {
+rigid_sim::RMesh ReadObj(std::string inputfile, bool use_normal=false, float zoom=1.0) {
   tinyobj::ObjReaderConfig reader_config;
   tinyobj::ObjReader reader;
 
@@ -96,13 +97,19 @@ rigid_sim::RMesh ReadObj(std::string inputfile, float zoom=1.0) {
                            attrib.vertices[3 * i + 1] * zoom,
                            attrib.vertices[3 * i + 2] * zoom);
   }
+  std::vector<vec3> normals;
   for (int i = 0; i < num_faces; ++i) {
     assert (shapes[0].mesh.num_face_vertices[i] == 3);
     faces[i] = Triangle(shapes[0].mesh.indices[3 * i].vertex_index, 
                         shapes[0].mesh.indices[3 * i + 1].vertex_index, 
                         shapes[0].mesh.indices[3 * i + 2].vertex_index);
+    if (!use_normal) continue;
+    assert (shapes[0].mesh.indices[3 * i].normal_index == shapes[0].mesh.indices[3 * i + 1].normal_index);
+    assert (shapes[0].mesh.indices[3 * i].normal_index == shapes[0].mesh.indices[3 * i + 2].normal_index);
+    auto index = 3 * shapes[0].mesh.indices[3 * i].normal_index;                      
+    normals.push_back(glm::vec3(attrib.normals[index], attrib.normals[index + 1], attrib.normals[index + 2]));
   }
-  rigid_sim::RMesh mesh{verts, faces};
+  rigid_sim::RMesh mesh{verts, faces, normals, false};
   mesh.SetMaterialColor({1.f, 1.f, 1.f});
   mesh.SetMaterialType(rigid_sim::DIFFUSE);
   return mesh;
@@ -114,17 +121,21 @@ int main(int argc, char *argv[]) {
 
   std::string envfile = "../assets/cornell.obj";
   rigid_sim::RMesh env = ReadEnvObj(envfile);
+  std::string lightfile = "../assets/cornell_light.obj";
+  rigid_sim::RMesh light = ReadEnvObj(lightfile);
+  light.SetMaterialType(rigid_sim::LIGHT);
+  light.SetMaterialColor({6.f, 6.f, 4.5f});
 
   std::string bunnyfile = "../assets/bunny_200.obj";
   std::string spherefile = "../assets/sphere.obj";
   std::string tallboxfile = "../assets/cornell_tallbox.obj";
   std::string shortboxfile = "../assets/cornell_shortbox.obj";
 
-  rigid_sim::RMesh bunny  = ReadObj(bunnyfile, 1);
+  rigid_sim::RMesh bunny  = ReadObj(bunnyfile);
   rigid_sim::RMesh sphere  = ReadObj(spherefile);
-  rigid_sim::RMesh tallbox  = ReadObj(tallboxfile);
+  rigid_sim::RMesh tallbox  = ReadObj(tallboxfile, true);
   tallbox.tag |= rigid_sim::RMESH_TAG_BOX;
-  rigid_sim::RMesh shortbox  = ReadObj(shortboxfile);
+  rigid_sim::RMesh shortbox  = ReadObj(shortboxfile, true);
   shortbox.tag |= rigid_sim::RMESH_TAG_BOX;
 
   auto& device = toy.device();
@@ -134,17 +145,19 @@ int main(int argc, char *argv[]) {
   // scene.set_camera(Camera(120, make_float2(size.x, size.y)));
   // scene.set_camera_offset(make_float3(0.0, 1.0, -4.0));
   // scene.set_gravity(glm::vec3(0.0f, -1.0f, 0.0f));
-  scene.set_camera(Camera(27, make_float2(size.x, size.y)));
+  scene.set_camera(Camera(23, make_float2(size.x, size.y)));
   scene.set_camera_offset(make_float3(0.0, 1.0, -6.8));
   scene.set_gravity(glm::vec3(0.0f, -1.0f, 0.0f));
 
-  bunny.x = vec3(0.f, 1.5f, 0.0f);
-  scene.AddMesh(bunny);
-  // env.x = vec3(0.f, -1.f, 0.f);
+  scene.AddMesh(light);
   scene.AddMesh(env);
+  bunny.x = vec3(-0.2f, 1.5f, 0.0f);
+  scene.AddMesh(bunny);
   tallbox.x = vec3(0.f, 0.1f, 0.0f);
+  tallbox.SetMaterialType(rigid_sim::SPECULAR);
   scene.AddMesh(tallbox);
   shortbox.x = vec3(0.f, 0.2f, 0.0f);
+  shortbox.SetMaterialType(rigid_sim::GLASS);
   scene.AddMesh(shortbox);
 
 

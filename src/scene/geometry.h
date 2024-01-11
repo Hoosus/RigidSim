@@ -49,6 +49,7 @@ class Geometry {
  public:
   [[nodiscard]] auto &device() noexcept { return _device; }
   [[nodiscard]] auto &meshes() noexcept { return _shapes; }
+  [[nodiscard]] auto &accel() noexcept { return _accel; }
 };
 
 

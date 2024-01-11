@@ -6,6 +6,7 @@
 #include <scene/scene.h>
 #include <render/sample.h>
 #include <glm/glm.hpp>
+#include <render/light.h>
 
 #if LUISA_SHADERTOY_HAS_OPENCV
 #include <opencv2/opencv.hpp>
@@ -168,20 +169,27 @@ void ShaderToy::_run_dump(rigid_sim::Scene &scene) noexcept {
     return cast<float>(state & 0x00ffffffu) *
                 (1.0f / static_cast<float>(0x01000000u));
     };
+    LightInfo light = ConstructLightinfo(scene);
+    if (light.valid) {
+      printf("detect light with area %.5lf\n", light.light_area);
+    }
+    Callable balanced_heuristic = [](Float pdf_a, Float pdf_b) noexcept {
+        return pdf_a / max(pdf_a + pdf_b, 1e-4f);
+    };
     auto main_shader = [&](Float2 fragCoord, Float2 iResolution, Float time, Float4 cursor) noexcept {
       Float3 res = make_float3(0.f);
       UInt state = tea(tea(UInt(fragCoord.x), UInt(fragCoord.y)), UInt(time));
       Float rx = lcg(state);
       Float ry = lcg(state);
       Float3 a1, a2, wi, wo, pp;
-      Float cos_wi, cos_wo, pdf_bsdf, pdf_light;
-      Bool flipped;
-      $for (spp, 10u) {
+      Float cos_wi, cos_wo, pdf_bsdf;
+      Bool flipped, last_is_diffuse;
+      $for (spp, 128u) {
         rx = lcg(state);
         ry = lcg(state);
         Var<Ray> ray = scene.generate_ray(fragCoord + make_float2(rx, ry) - 0.5f);
         Float3 throughput = make_float3(1.f);
-        $for (depth, 10u) {
+        $for (depth, 30u) {
           auto it = scene.geometry().intersect(ray);
           reorder_shader_execution();
           //   uint inst;
@@ -189,7 +197,7 @@ void ShaderToy::_run_dump(rigid_sim::Scene &scene) noexcept {
           //   float2 bary;
           //   float committed_ray_t;  
           $if (it->miss()) {
-            Float3 env_color = make_float3(0.8f, 0.65f, 0.75f) + ray->direction() * make_float3(0.2f, 0.35f, 0.25f);
+            Float3 env_color = make_float3(0.85f, 0.7f, 0.8f) + ray->direction() * make_float3(0.08f, 0.12f, 0.08f);
             res += throughput * env_color;
             $break;
           };
@@ -211,12 +219,52 @@ void ShaderToy::_run_dump(rigid_sim::Scene &scene) noexcept {
             flipped = false;
           };
           Var<RMaterial> mat = scene.geometry().heapm->buffer<RMaterial>(0).read(it.inst);
-          // $if (mat->is_light()) {
-          //   res += throughput * mat->c();
-          //   $break;
-          // };
+          $if (mat->is_light()) {
+            $if (depth == 0u) {
+              res += mat->c();
+            } $else {
+              Float mis_weight = 1.0f;
+              $if (last_is_diffuse) {
+                Float pdf_light = length_squared(p - ray->origin()) / (light.light_area * cos_wi);
+                mis_weight = balanced_heuristic(pdf_bsdf, pdf_light);
+              };
+              res += mis_weight * throughput * mat->c() * cos_wi;
+            };
+            $break;
+          };
           wi = -ray->direction();
+
+          // sample light
+
+          $if (mat->is_diffuse()) {
+            $if (light.valid) {
+              rx = lcg(state);
+              ry = lcg(state);
+              Float3 light_u = light.light_u;
+              Float3 light_v = light.light_v;
+              Float3 light_position = light.light_position + rx * light_u + ry * light_v;
+              Float3 light_wo = normalize(light_position - p);
+              Float3 pp_light = offset_ray_origin(light_position, -light_wo);
+              Float3 pp_shade = offset_ray_origin(p, light_wo);
+              Float d_light = distance(pp_shade, pp_light);
+              Var<Ray> shadow_ray = make_ray(pp_shade, light_wo, 0.f, d_light);
+              Bool occluded = scene.geometry().accel()->intersect_any(shadow_ray, {});
+              Float cos_wo_light = dot(light_wo, n);
+              Float cos_light = abs(dot(light_wo, normalize(cross(light_u, light_v))));
+              $if (!occluded & cos_wo_light > 1e-4f & cos_light > 1e-4f) {
+                Float3 light_emission = light.color;
+                Float3 albedo = mat->c();
+                Float pdf_light = (d_light * d_light) / (light.light_area * cos_light);
+                Float pdf_bsdf = cos_wo_light * inv_pi;
+                Float mis_weight = balanced_heuristic(pdf_light, pdf_bsdf);
+                Float3 bsdf = albedo * inv_pi * cos_wo_light;
+                res += throughput * bsdf * mis_weight * light_emission / max(pdf_light, 1e-4f);
+              };
+            };
+          };
+          last_is_diffuse = false;
           $if (mat->is_diffuse()) {          
+            last_is_diffuse = true;
             construct_world_basis(n, a1, a2);
             throughput *= mat->c();
             rx = lcg(state);
@@ -230,20 +278,14 @@ void ShaderToy::_run_dump(rigid_sim::Scene &scene) noexcept {
             res = make_float3(0.f, 0.f, 1.f);
             $break;
           } $elif (mat->is_specular()) {
-            // TODO
-            res = make_float3(0.f, 0.f, 1.f);
-            $break;
             throughput *= mat->c();
             wo = my_reflect(wi, n);
           } $else {
-            // TODO
-            res = make_float3(0.f, 0.f, 1.f);
-            $break;
             throughput *= mat->c();
             $if (flipped) {
-              wo = refract(wi, n, 1.5f);
+              wo = refract(wi, n, 1.25f);
             } $else {
-              wo = refract(wi, n, 0.67f);
+              wo = refract(wi, n, 0.8f);
             };
           };
           // $if (mat->is_glass()) {
@@ -254,9 +296,17 @@ void ShaderToy::_run_dump(rigid_sim::Scene &scene) noexcept {
           // pp = offset_ray_origin(p, wo);
           pp = p + (1.0f / 1024.f) * wo;
           ray = make_ray(pp, wo);
+
+          // rr
+          Float l = dot(make_float3(0.212671f, 0.715160f, 0.072169f), throughput);
+          $if (l == 0.0f) { $break; };
+          Float q = max(l, 0.05f);
+          Float r = lcg(state);
+          $if (r >= q) { $break; };
+          throughput *= 1.0f / q;
         };
       };
-      return res / 10.f;
+      return res / 128.f;
     };
     auto shader = _device->compile(Kernel2D{[&](ImageFloat image, Float time, Float4 cursor) noexcept {
       using namespace compute;
